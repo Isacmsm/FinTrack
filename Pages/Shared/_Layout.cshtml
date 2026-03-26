@@ -1,0 +1,36 @@
+﻿<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - FinTrack</title>
+    <link rel="stylesheet" href="~/css/output.css" asp-append-version="true" />
+</head>
+<body class="min-h-screen flex flex-col">
+<header>
+    <nav class="bg-white border-b shadow-sm px-6 py-3 flex items-center justify-between">
+        <a class="text-xl font-bold text-gray-800" asp-area="" asp-page="/Index">FinTrack</a>
+        <ul class="flex gap-4">
+            <li>
+                <a class="text-gray-600 hover:text-gray-900" asp-area="" asp-page="/Index">Home</a>
+            </li>
+        </ul>
+    </nav>
+</header>
+
+<div class="max-w-6xl mx-auto w-full px-4 flex-grow">
+    <main role="main" class="py-6">
+        @RenderBody()
+    </main>
+</div>
+
+<footer class="border-t text-gray-500 text-sm py-4 px-6">
+    &copy; 2026 - FinTrack
+</footer>
+
+<script src="~/lib/jquery/dist/jquery.min.js"></script>
+<script src="~/js/site.js" asp-append-version="true"></script>
+
+@await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

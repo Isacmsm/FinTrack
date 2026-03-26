@@ -1,0 +1,335 @@
+@page
+
+@functions {
+    public void OnGet()
+    {
+    }
+}
+@{
+    ViewData["Title"] = "Home";
+    Layout = null;
+}
+
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FinTrack - Suas finanças no controle</title>
+    <link rel="stylesheet" href="~/css/output.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        h1, h2, h3, h4, .font-display { font-family: 'Outfit', sans-serif; }
+
+        .hero-gradient {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f4c3a 100%);
+        }
+
+        .card-hover {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .card-hover:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.12);
+        }
+
+        .feature-icon {
+            width: 56px;
+            height: 56px;
+            object-fit: contain;
+            opacity: 1;
+        }
+
+        .cta-gradient {
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+        }
+
+        .fade-in {
+            opacity: 0;
+            transform: translateY(20px);
+            animation: fadeInUp 0.6s ease forwards;
+        }
+
+        .fade-in-delay-1 { animation-delay: 0.1s; }
+        .fade-in-delay-2 { animation-delay: 0.2s; }
+        .fade-in-delay-3 { animation-delay: 0.3s; }
+        .fade-in-delay-4 { animation-delay: 0.4s; }
+        .fade-in-delay-5 { animation-delay: 0.5s; }
+
+        @@keyframes fadeInUp {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .glow {
+            box-shadow: 0 0 60px rgba(16, 185, 129, 0.15);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 antialiased">
+
+    <!-- Header -->
+    <header class="fixed top-0 w-full z-50 bg-white/90 backdrop-blur-sm border-b border-gray-100">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <img src="~/images/carteira.png" alt="FinTrack" class="w-10 h-10" />
+                <span class="font-display text-2xl font-bold text-gray-900">FinTrack</span>
+            </div>
+            <div class="flex items-center gap-3">
+                <a asp-page="/ControleAcesso/Index" class="px-5 py-2.5 text-gray-600 hover:text-gray-900 font-medium transition-colors">
+                    Entrar
+                </a>
+                <a asp-page="/ControleAcesso/Registro" class="px-5 py-2.5 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 transition-colors">
+                    Criar Conta
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero -->
+    <section class="hero-gradient min-h-screen flex items-center justify-center text-white pt-20">
+        <div class="max-w-4xl mx-auto px-6 text-center">
+            <div class="fade-in">
+                <img src="~/images/carteira.png" alt="" class="w-24 h-24 mx-auto mb-8" />
+            </div>
+            <h1 class="font-display text-5xl md:text-7xl font-800 mb-6 fade-in fade-in-delay-1 leading-tight">
+                Suas finanças<br>
+                <span class="text-emerald-400">no controle.</span>
+            </h1>
+            <p class="text-xl md:text-2xl text-gray-300 mb-10 max-w-2xl mx-auto fade-in fade-in-delay-2 leading-relaxed">
+                Organize receitas, despesas e investimentos em um só lugar. Simples, visual e sem complicação.
+            </p>
+            <div class="flex flex-col sm:flex-row gap-4 justify-center fade-in fade-in-delay-3">
+                <a asp-page="/ControleAcesso/Registro" class="cta-gradient px-8 py-4 rounded-lg text-white font-semibold text-lg hover:opacity-90 transition-opacity">
+                    Começar Agora
+                </a>
+                <a href="#funcionalidades" class="px-8 py-4 rounded-lg border border-gray-500 text-gray-300 font-semibold text-lg hover:bg-white/10 transition-colors">
+                    Ver Funcionalidades
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Funcionalidades -->
+    <section id="funcionalidades" class="py-24 px-6">
+        <div class="max-w-7xl mx-auto">
+            <div class="text-center mb-20">
+                <h2 class="font-display text-4xl md:text-5xl font-bold text-gray-900 mb-4">
+                    Tudo que você precisa
+                </h2>
+                <p class="text-lg text-gray-500 max-w-xl mx-auto">
+                    Do controle diário ao planejamento de longo prazo, o FinTrack cobre todas as suas necessidades financeiras.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+
+                <!-- Controle Financeiro -->
+                <div class="bg-white rounded-2xl p-8 border border-gray-100 card-hover">
+                    <div class="flex items-center gap-3 mb-5">
+                        <img src="~/images/carteira.png" alt="" class="feature-icon" />
+                        <h3 class="font-display text-xl font-bold text-gray-900">Controle Financeiro</h3>
+                    </div>
+                    <p class="text-gray-500 mb-5 leading-relaxed">
+                        Registre suas receitas e despesas com facilidade. Categorize cada transação e tenha uma visão clara de onde seu dinheiro está indo.
+                    </p>
+                    <ul class="space-y-2 text-sm text-gray-600">
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Receitas e despesas
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Categorias personalizáveis
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Orçamento mensal com metas
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Gastos recorrentes e assinaturas
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Cartões e Parcelas -->
+                <div class="bg-white rounded-2xl p-8 border border-gray-100 card-hover">
+                    <div class="flex items-center gap-3 mb-5">
+                        <img src="~/images/cartao.png" alt="" class="feature-icon" />
+                        <h3 class="font-display text-xl font-bold text-gray-900">Cartões e Parcelas</h3>
+                    </div>
+                    <p class="text-gray-500 mb-5 leading-relaxed">
+                        Gerencie seus cartões de crédito, acompanhe faturas e controle compras parceladas sem perder nenhuma parcela.
+                    </p>
+                    <ul class="space-y-2 text-sm text-gray-600">
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Cadastro de cartões com limite
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Controle de fatura
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Acompanhamento de parcelas
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Impacto nas faturas futuras
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Investimentos e Metas -->
+                <div class="bg-white rounded-2xl p-8 border border-gray-100 card-hover">
+                    <div class="flex items-center gap-3 mb-5">
+                        <img src="~/images/moedas.png" alt="" class="feature-icon" />
+                        <h3 class="font-display text-xl font-bold text-gray-900">Investimentos e Metas</h3>
+                    </div>
+                    <p class="text-gray-500 mb-5 leading-relaxed">
+                        Acompanhe seus investimentos, defina metas de economia e planeje sua liberdade financeira.
+                    </p>
+                    <ul class="space-y-2 text-sm text-gray-600">
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Registro de investimentos
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Metas de economia com progresso
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Simulador de liberdade financeira
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Rentabilidade por aplicação
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Simuladores -->
+                <div class="bg-white rounded-2xl p-8 border border-gray-100 card-hover">
+                    <div class="flex items-center gap-3 mb-5">
+                        <img src="~/images/dinheiro.png" alt="" class="feature-icon" />
+                        <h3 class="font-display text-xl font-bold text-gray-900">Simuladores</h3>
+                    </div>
+                    <p class="text-gray-500 mb-5 leading-relaxed">
+                        Ferramentas inteligentes para te ajudar a tomar decisões financeiras melhores no dia a dia.
+                    </p>
+                    <ul class="space-y-2 text-sm text-gray-600">
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Salário-hora
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            À vista vs a prazo
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Comprar vs alugar
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Quanto quero ganhar
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Relatórios -->
+                <div class="bg-white rounded-2xl p-8 border border-gray-100 card-hover">
+                    <div class="flex items-center gap-3 mb-5">
+                        <img src="~/images/saco-dinheiro.png" alt="" class="feature-icon" />
+                        <h3 class="font-display text-xl font-bold text-gray-900">Relatórios e Dashboard</h3>
+                    </div>
+                    <p class="text-gray-500 mb-5 leading-relaxed">
+                        Visualize sua saúde financeira com gráficos claros, DRE pessoal e comparativos entre períodos.
+                    </p>
+                    <ul class="space-y-2 text-sm text-gray-600">
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Dashboard com gráficos
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            DRE pessoal anual
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Comparativo mensal
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Alertas de gastos excessivos
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Planejamento -->
+                <div class="bg-white rounded-2xl p-8 border border-gray-100 card-hover">
+                    <div class="flex items-center gap-3 mb-5">
+                        <img src="~/images/cofre.png" alt="" class="feature-icon" />
+                        <h3 class="font-display text-xl font-bold text-gray-900">Planejamento Futuro</h3>
+                    </div>
+                    <p class="text-gray-500 mb-5 leading-relaxed">
+                        Projete seus próximos meses com fluxo de caixa futuro, considerando recorrentes e parcelas.
+                    </p>
+                    <ul class="space-y-2 text-sm text-gray-600">
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Fluxo de caixa futuro
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Projeção com recorrentes
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Tags e etiquetas
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            Importação de extratos (CSV)
+                        </li>
+                    </ul>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Final -->
+    <section class="py-24 px-6">
+        <div class="max-w-3xl mx-auto text-center">
+            <div class="cta-gradient rounded-3xl p-12 md:p-16 glow">
+                <h2 class="font-display text-3xl md:text-4xl font-bold text-white mb-4">
+                    Pronto para organizar suas finanças?
+                </h2>
+                <p class="text-emerald-100 text-lg mb-8 max-w-xl mx-auto">
+                    Comece agora e tenha o controle total do seu dinheiro. Gratuito, simples e direto ao ponto.
+                </p>
+                <a asp-page="/ControleAcesso/Registro" class="inline-block px-8 py-4 bg-white text-emerald-700 rounded-lg font-semibold text-lg hover:bg-gray-100 transition-colors">
+                    Criar Minha Conta
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-gray-200 py-8 px-6">
+        <div class="max-w-7xl mx-auto text-center text-gray-400 text-sm">
+            <p>&copy; 2026 FinTrack. Feito por Isac Macedo.</p>
+        </div>
+    </footer>
+
+</body>
+</html>

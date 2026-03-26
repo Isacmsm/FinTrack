@@ -1,0 +1,25 @@
+# ASP.NET Core / .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+launchSettings.json
+
+# Configurações sensíveis
+appsettings.Development.json
+
+# Node / Tailwind
+node_modules/
+
+# Rider / JetBrains
+.idea/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
