@@ -45,7 +45,10 @@ O projeto também serve como laboratório de estudo para a transição do **.NET
 |----------------|-----------|
 | **Landing Page** | Página inicial apresentando o FinTrack com seções de funcionalidades, CTA e design responsivo |
 | **Login funcional** | Autenticação via AJAX com handler C#, sessão, tratamento de erros de input e sistema |
-| **Página de Registro** | Estrutura da página criada em `Pages/ControleAcesso/Registro.cshtml` |
+| **Página de Registro** | Formulário de registro com nome, e-mail e senha em `Pages/ControleAcesso/Registro.cshtml` |
+| **Layout de Acesso** | Layout compartilhado para login/registro (`_LayoutAcesso.cshtml`) |
+| **Utilitários JS** | Funções `mostrarErros()` e `limparErros()` reutilizáveis em `site.js` |
+| **Util.cs** | Helper `ExecutarHandler` para padronizar try/catch dos handlers |
 | **Estrutura do Banco** | Todas as tabelas criadas (Usuario, Categoria, Transacao, Recorrente, Divida, Banco) |
 | **Stored Procedures** | CRUD completo para todas as tabelas seguindo o padrão da Log |
 | **DaoService** | Classe de acesso a dados com ADO.NET |
@@ -56,7 +59,7 @@ O projeto também serve como laboratório de estudo para a transição do **.NET
 
 | Funcionalidade | Descrição |
 |----------------|-----------|
-| **Registro de usuário** | Handler C# para criação de conta |
+| **Registro de usuário** | Handler C# e AJAX para criação de conta |
 | **Verificação de sessão** | Proteção de páginas internas (usuário logado) |
 
 ### 🔴 Planejado
@@ -221,13 +224,16 @@ FinTrack/
 │   └── lib/jquery/
 ├── Data/
 │   ├── DaoService.cs             # Acesso a dados (padrão Log)
-│   └── ErroExecucaoException.cs  # Tratamento de erros de SPs
+│   ├── ErroExecucaoException.cs  # Tratamento de erros de SPs
+│   └── Util.cs                   # Helper para handlers (ExecutarHandler)
 ├── Pages/
 │   ├── Shared/
 │   │   └── _Layout.cshtml        # Layout principal
 │   ├── ControleAcesso/
 │   │   ├── Index.cshtml          # Login
-│   │   └── Registro.cshtml       # Registro de usuário
+│   │   ├── Registro.cshtml       # Registro de usuário
+│   │   ├── _LayoutAcesso.cshtml  # Layout compartilhado (login/registro)
+│   │   └── _ViewStart.cshtml     # Define layout da pasta
 │   ├── Index.cshtml              # Landing page
 │   └── Error.cshtml
 ├── Program.cs
