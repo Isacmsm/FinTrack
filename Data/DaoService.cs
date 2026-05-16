@@ -14,7 +14,7 @@ public class DaoService
         _stringConexao = configuration.GetConnectionString("FinTrack");
     }
 
-    private void ExecutarProcedure(string procedure, Dictionary<string, object> parametros)
+    public void ExecutarProcedure(string procedure, Dictionary<string, object> parametros)
     {
         List<SqlError> erros = null;
         
@@ -54,7 +54,7 @@ public class DaoService
         conn.Dispose(); 
     }
 
-        public List<T> ExecutarProcedureList<T>(string procedure, Dictionary<string, object> parametros)
+    public List<T> ExecutarProcedureList<T>(string procedure, Dictionary<string, object> parametros)
     {
         List<T> list = null; 
 
