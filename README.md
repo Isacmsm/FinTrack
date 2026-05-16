@@ -45,7 +45,7 @@ O projeto também serve como laboratório de estudo para a transição do **.NET
 |----------------|-----------|
 | **Landing Page** | Página inicial apresentando o FinTrack com seções de funcionalidades, CTA e design responsivo |
 | **Login funcional** | Autenticação via AJAX com handler C#, sessão, tratamento de erros de input e sistema |
-| **Página de Registro** | Formulário de registro com nome, e-mail e senha em `Pages/ControleAcesso/Registro.cshtml` |
+| **Registro de usuário** | Formulário, handler C# e AJAX para criação de conta (`Pages/ControleAcesso/Registro.cshtml`) |
 | **Layout de Acesso** | Layout compartilhado para login/registro (`_LayoutAcesso.cshtml`) |
 | **Utilitários JS** | Funções `mostrarErros()` e `limparErros()` reutilizáveis em `site.js` |
 | **Util.cs** | Helper `ExecutarHandler` para padronizar try/catch dos handlers |
@@ -59,7 +59,6 @@ O projeto também serve como laboratório de estudo para a transição do **.NET
 
 | Funcionalidade | Descrição |
 |----------------|-----------|
-| **Registro de usuário** | Handler C# e AJAX para criação de conta |
 | **Verificação de sessão** | Proteção de páginas internas (usuário logado) |
 
 ### 🔴 Planejado
@@ -182,7 +181,8 @@ npm install
 # Gere o CSS
 npm run css:build
 
-# Configure a connection string no appsettings.json
+# Configure a connection string em appsettings.Development.json (crie o arquivo se não existir)
+# O appsettings.json já tem um placeholder — não editar diretamente
 
 # Execute os scripts SQL para criar as tabelas e procedures
 
