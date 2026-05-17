@@ -44,10 +44,6 @@
         HttpContext.Session.SetString("EmailUser", usuario.Email);
     }
 
-    public void OnGet()
-    {
-    }
-
     public IActionResult OnPostLogin([FromBody] LoginRequest request)
     {
         AlimentarVariaveis(request);
@@ -77,14 +73,14 @@
                 <!-- Logo -->
                 <div class="text-center mb-8 fade-in fade-in-delay-1">
                     <img src="~/images/carteira.png" alt="FinTrack" class="w-16 h-16 mx-auto mb-3" />
-                    <h1 class="font-display text-3xl font-bold text-gray-900">FinTrack</h1>
-                    <p class="text-gray-400 text-sm mt-1">Suas finanças no controle</p>
+                    <h1 class="font-display text-3xl font-bold text-slate-900">FinTrack</h1>
+                    <p class="text-slate-400 text-sm mt-1">Suas finanças no controle</p>
                 </div>
 
                 <!-- Mensagem de boas-vindas -->
                 <div class="mb-8 fade-in fade-in-delay-2">
-                    <h2 class="font-display text-xl font-semibold text-gray-800">Bem-vindo de volta</h2>
-                    <p class="text-gray-400 text-sm mt-1">Entre na sua conta para continuar</p>
+                    <h2 class="font-display text-xl font-semibold text-slate-800">Bem-vindo de volta</h2>
+                    <p class="text-slate-400 text-sm mt-1">Entre na sua conta para continuar</p>
                 </div>
 
                 <!-- Formulário -->
@@ -94,32 +90,32 @@
 
                     <!-- E-mail -->
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1.5">E-mail</label>
+                        <label class="block text-sm font-medium text-slate-700 mb-1.5">E-mail</label>
                         <input
                             type="email"
                             id="email"
                             name="email"
                             placeholder="seu@@email.com"
-                            class="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800 placeholder-gray-300 input-focus transition-all"
+                            class="w-full px-4 py-3 rounded-xl border border-slate-200 text-slate-800 placeholder-slate-300 input-focus transition-all"
                         />
                         <span class="text-red-500 text-xs mt-1 hidden" id="erroEmail"></span>
                     </div>
 
                     <!-- Senha -->
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1.5">Senha</label>
+                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Senha</label>
                         <div class="relative">
                             <input
                                 type="password"
                                 id="senha"
                                 name="senha"
                                 placeholder="••••••••"
-                                class="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800 placeholder-gray-300 input-focus transition-all pr-12"
+                                class="w-full px-4 py-3 rounded-xl border border-slate-200 text-slate-800 placeholder-slate-300 input-focus transition-all pr-12"
                             />
                             <button
                                 type="button"
                                 onclick="toggleSenha()"
-                                class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                                class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
                             >
                                 <svg id="iconOlho" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
                                     <path d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
@@ -144,11 +140,11 @@
                     </button>
 
                     <!-- Divisor -->
-                    <div class="divider text-gray-300 text-xs">ou</div>
+                    <div class="divider text-slate-300 text-xs">ou</div>
 
                     <!-- Link Registro -->
                     <div class="text-center">
-                        <p class="text-gray-500 text-sm">
+                        <p class="text-slate-500 text-sm">
                             Não tem uma conta?
                             <a asp-page="/ControleAcesso/Registro" class="text-emerald-600 font-semibold hover:text-emerald-700 transition-colors">
                                 Criar conta
@@ -199,7 +195,7 @@
                 data: JSON.stringify({ email: email, senha: senha }),
                 success: function (response) {
                     if (response.sucesso) {
-                        window.location.href = '/Dashboard';
+                        window.location.href = '/App';
                     }
                 },
                 error: function (xhr) {

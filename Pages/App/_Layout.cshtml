@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - FinTrack</title>
+    <link rel="stylesheet" href="~/css/output.css" />
+</head>
+<body class="bg-slate-50 min-h-screen antialiased">
+
+    <!-- ============ HEADER ============ -->
+    <header class="bg-white border-b border-slate-200 fixed top-0 left-0 right-0 h-16 z-30 flex items-center justify-between px-6">
+        
+        <!-- Logo -->
+        <a href="/App" class="flex items-center gap-2">
+            <div class="w-9 h-9 bg-emerald-500 rounded-lg flex items-center justify-center">
+                <span class="text-white font-bold text-lg">F</span>
+            </div>
+            <span class="text-xl font-bold text-slate-800">FinTrack</span>
+        </a>
+
+        <!-- Ações do header -->
+        <div class="flex items-center gap-4">
+            
+            <!-- Notificações -->
+            <button class="relative p-2 hover:bg-slate-100 rounded-lg transition">
+                <svg class="w-6 h-6 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                </svg>
+                <span class="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+            </button>
+
+            <!-- Perfil dropdown -->
+            <div class="relative" id="perfilDropdown">
+                <button class="flex items-center gap-2 p-2 hover:bg-slate-100 rounded-lg transition" id="btnPerfil">
+                    <div class="w-8 h-8 bg-emerald-100 rounded-full flex items-center justify-center">
+                        <span class="text-emerald-700 font-semibold text-sm">
+                            @(((Context.Session.GetString("NomeUser") ?? "U"))[0])
+                        </span>
+                    </div>
+                    <span class="text-sm font-medium text-slate-700">
+                        @Context.Session.GetString("NomeUser")
+                    </span>
+                    <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </button>
+
+                <!-- Menu dropdown -->
+                <div class="hidden absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1" id="menuPerfil">
+                    <a href="/App/Perfil" class="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Meu perfil</a>
+                    <hr class="my-1 border-slate-200"/>
+                    <a href="/ControleAcesso/Sair" class="block px-4 py-2 text-sm text-red-600 hover:bg-red-50">Sair</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- ============ MENU LATERAL ============ -->
+    <aside class="fixed top-16 left-0 bottom-0 w-64 bg-white border-r border-slate-200 overflow-y-auto z-20">
+        <nav class="p-4 space-y-1">
+            
+            <!-- Dashboard -->
+            <a href="/App" class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+                </svg>
+                <span class="text-sm font-medium">Dashboard</span>
+            </a>
+
+            <!-- Controle Financeiro -->
+            <div class="menu-grupo">
+                <button class="menu-toggle w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <span class="text-sm font-medium">Controle Financeiro</span>
+                    </div>
+                    <svg class="menu-seta w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </button>
+                <div class="menu-submenu hidden ml-8 mt-1 space-y-1">
+                    <a href="/App/ControleFinanceiro/Transacoes" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Transações</a>
+                    <a href="/App/ControleFinanceiro/Categorias" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Categorias</a>
+                    <a href="/App/ControleFinanceiro/Recorrentes" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Recorrentes</a>
+                    <a href="/App/ControleFinanceiro/Orcamento" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Orçamento</a>
+                </div>
+            </div>
+
+            <!-- Cartões -->
+            <div class="menu-grupo">
+                <button class="menu-toggle w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/>
+                        </svg>
+                        <span class="text-sm font-medium">Cartões</span>
+                    </div>
+                    <svg class="menu-seta w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </button>
+                <div class="menu-submenu hidden ml-8 mt-1 space-y-1">
+                    <a href="/App/Cartoes/Cartoes" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Meus cartões</a>
+                    <a href="/App/Cartoes/Faturas" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Faturas</a>
+                    <a href="/App/Cartoes/Parcelas" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Parcelas</a>
+                </div>
+            </div>
+
+            <!-- Investimentos -->
+            <div class="menu-grupo">
+                <button class="menu-toggle w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+                        </svg>
+                        <span class="text-sm font-medium">Investimentos</span>
+                    </div>
+                    <svg class="menu-seta w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </button>
+                <div class="menu-submenu hidden ml-8 mt-1 space-y-1">
+                    <a href="/App/Investimentos/Aplicacoes" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Aplicações</a>
+                    <a href="/App/Investimentos/Metas" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Metas</a>
+                </div>
+            </div>
+
+            <!-- Simuladores -->
+            <div class="menu-grupo">
+                <button class="menu-toggle w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+                        </svg>
+                        <span class="text-sm font-medium">Simuladores</span>
+                    </div>
+                    <svg class="menu-seta w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </button>
+                <div class="menu-submenu hidden ml-8 mt-1 space-y-1">
+                    <a href="/App/Simuladores/SalarioHora" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Salário-hora</a>
+                    <a href="/App/Simuladores/AVistaVsAPrazo" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">À vista vs a prazo</a>
+                    <a href="/App/Simuladores/ComprarVsAlugar" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Comprar vs alugar</a>
+                    <a href="/App/Simuladores/QuantoQueroGanhar" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Quanto quero ganhar</a>
+                </div>
+            </div>
+
+            <!-- Relatórios -->
+            <div class="menu-grupo">
+                <button class="menu-toggle w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                        <span class="text-sm font-medium">Relatórios</span>
+                    </div>
+                    <svg class="menu-seta w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </button>
+                <div class="menu-submenu hidden ml-8 mt-1 space-y-1">
+                    <a href="/App/Relatorios/DRE" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">DRE pessoal</a>
+                    <a href="/App/Relatorios/Comparativo" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Comparativo</a>
+                    <a href="/App/Relatorios/Alertas" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Alertas</a>
+                </div>
+            </div>
+
+            <!-- Planejamento Futuro -->
+            <div class="menu-grupo">
+                <button class="menu-toggle w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                        <span class="text-sm font-medium">Planejamento</span>
+                    </div>
+                    <svg class="menu-seta w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </button>
+                <div class="menu-submenu hidden ml-8 mt-1 space-y-1">
+                    <a href="/App/PlanejamentoFuturo/FluxoCaixa" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Fluxo de caixa</a>
+                    <a href="/App/PlanejamentoFuturo/Projecao" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Projeção</a>
+                </div>
+            </div>
+        </nav>
+    </aside>
+
+    <!-- ============ CONTEÚDO ============ -->
+    <main class="ml-64 pt-16 min-h-screen">
+        <div class="p-8">
+            @RenderBody()
+        </div>
+    </main>
+
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+    <script>
+        $(document).ready(function() {
+            // Toggle dos grupos do menu
+            $('.menu-toggle').on('click', function() {
+                const submenu = $(this).siblings('.menu-submenu');
+                const seta = $(this).find('.menu-seta');
+                submenu.toggleClass('hidden');
+                seta.toggleClass('rotate-180');
+            });
+
+            // Toggle do dropdown do perfil
+            $('#btnPerfil').on('click', function(e) {
+                e.stopPropagation();
+                $('#menuPerfil').toggleClass('hidden');
+            });
+
+            // Fechar dropdown ao clicar fora
+            $(document).on('click', function() {
+                $('#menuPerfil').addClass('hidden');
+            });
+        });
+    </script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

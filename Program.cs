@@ -1,9 +1,17 @@
 using FinTrack.Data;
+using FinTrack.Filters;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddSession();
-builder.Services.AddRazorPages().AddRazorRuntimeCompilation();
+builder.Services.AddRazorPages(options =>
+{
+    options.Conventions.AddFolderApplicationModelConvention(
+        "/App",
+        model => model.Filters.Add(new VerificaSessaoFilter())
+    );
+}).AddRazorRuntimeCompilation();
 builder.Services.AddScoped<DaoService>();
 
 var app = builder.Build();
