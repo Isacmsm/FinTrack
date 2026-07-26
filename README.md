@@ -8,8 +8,9 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet" alt=".NET 10" />
-  <img src="https://img.shields.io/badge/SQL%20Server-Express-CC2927?logo=microsoftsqlserver" alt="SQL Server" />
-  <img src="https://img.shields.io/badge/Tailwind%20CSS-4.2-06B6D4?logo=tailwindcss" alt="Tailwind CSS" />
+  <img src="https://img.shields.io/badge/EF%20Core-10-512BD4?logo=dotnet" alt="EF Core 10" />
+  <img src="https://img.shields.io/badge/SQL%20Server-2025%20(Docker)-CC2927?logo=microsoftsqlserver" alt="SQL Server" />
+  <img src="https://img.shields.io/badge/Bootstrap-5.3-7952B3?logo=bootstrap" alt="Bootstrap 5.3" />
   <img src="https://img.shields.io/badge/jQuery-3.x-0769AD?logo=jquery" alt="jQuery" />
   <img src="https://img.shields.io/badge/Status-Em%20Desenvolvimento-yellow" alt="Status" />
 </p>
@@ -29,11 +30,15 @@ O projeto também serve como laboratório de estudo para a transição do **.NET
 | Camada | Tecnologia |
 |--------|-----------|
 | **Back-end** | .NET 10 · ASP.NET Core Razor Pages (single-file) |
-| **Banco de dados** | SQL Server · Stored Procedures · ADO.NET puro |
-| **Acesso a dados** | DaoService com injeção de dependência |
-| **Front-end** | Tailwind CSS 4.2 · jQuery · AJAX |
+| **Banco de dados** | SQL Server 2025 (Docker) |
+| **Acesso a dados** | Entity Framework Core 10 · Migrations |
+| **Autenticação** | Sessão + `IPasswordHasher` (PBKDF2). Sem ASP.NET Identity |
+| **Front-end** | Bootstrap 5.3 (CDN) · jQuery · AJAX |
 | **Fontes** | Outfit (títulos) · Plus Jakarta Sans (corpo) |
 | **Paleta** | Tons de verde/esmeralda |
+
+> O projeto **não tem passo de build de front-end**: o Bootstrap vem por CDN, então não há `npm`,
+> `node_modules` nem CSS compilado. Rodar é `dotnet run`.
 
 ---
 
@@ -43,23 +48,26 @@ O projeto também serve como laboratório de estudo para a transição do **.NET
 
 | Funcionalidade | Descrição |
 |----------------|-----------|
-| **Landing Page** | Página inicial apresentando o FinTrack com seções de funcionalidades, CTA e design responsivo |
-| **Login funcional** | Autenticação via AJAX com handler C#, sessão, tratamento de erros de input e sistema |
-| **Registro de usuário** | Formulário, handler C# e AJAX para criação de conta (`Pages/ControleAcesso/Registro.cshtml`) |
-| **Layout de Acesso** | Layout compartilhado para login/registro (`_LayoutAcesso.cshtml`) |
-| **Utilitários JS** | Funções `mostrarErros()` e `limparErros()` reutilizáveis em `site.js` |
-| **Util.cs** | Helper `ExecutarHandler` para padronizar try/catch dos handlers |
-| **Estrutura do Banco** | Todas as tabelas criadas (Usuario, Categoria, Transacao, Recorrente, Divida, Banco) |
-| **Stored Procedures** | CRUD completo para todas as tabelas seguindo o padrão da Log |
-| **DaoService** | Classe de acesso a dados com ADO.NET |
-| **ErroExecucaoException** | Tratamento de erros de SPs com suporte ao error number 50001 (JSON) |
-| **Tailwind CSS** | Configurado com CLI, scripts de build e watch |
+| **Landing Page** | Página inicial com seções de funcionalidades, CTA e design responsivo |
+| **Login** | Autenticação via AJAX, sessão, mensagens de erro por campo |
+| **Registro de usuário** | Criação de conta com validação de nome, e-mail e senha |
+| **Hash de senha** | `IPasswordHasher` (PBKDF2, salt por usuário). Contas antigas em texto puro são convertidas automaticamente no primeiro login |
+| **Verificação de sessão** | `VerificaSessaoFilter` protege toda a pasta `/App`, redirecionando quem não está logado |
+| **Layout autenticado** | Header + sidebar com 6 grupos de menu colapsáveis e dropdown de perfil, via componentes do Bootstrap (sem JS próprio) |
+| **Layout de Acesso** | Layout compartilhado para login/registro com glass-morphism e animações |
+| **EF Core + Migrations** | DbContext e entidades mapeadas para as 6 tabelas; schema versionado em migrations |
+| **Validação em C#** | Classe `Validador`, que acumula erros e devolve um por campo |
+| **Utilitários JS** | `mostrarErros()` e `limparErros()` em `site.js` |
+| **Util.cs** | `ExecutarHandler` / `ExecutarHandlerAsync` para padronizar o try/catch dos handlers |
+| **Estrutura do Banco** | 6 tabelas com FKs (Usuario, Categoria, Transacao, Recorrente, Divida, Banco) |
 
 ### 🟡 Em Desenvolvimento
 
 | Funcionalidade | Descrição |
 |----------------|-----------|
-| **Verificação de sessão** | Proteção de páginas internas (usuário logado) |
+| **Dashboard** | A página `/App` existe, mas por enquanto é um placeholder — sem gráficos ou dados |
+| **Navegação da sidebar** | Os itens de menu já estão montados, mas as páginas de destino ainda não existem |
+| **Logout** | O link `/ControleAcesso/Sair` está no menu de perfil, a página ainda não foi criada |
 
 ### 🔴 Planejado
 
@@ -140,24 +148,32 @@ Usuario (1) ──── (N) Transacao (N) ──── (1) Categoria
 ```
 
 ### Tabelas
-- **Usuario** — Dados de autenticação (nome, email, senha hash)
+- **Usuario** — Dados de autenticação (nome, e-mail, senha com hash PBKDF2)
 - **Categoria** — Tipos de receita/despesa (IdUser NULL = categoria padrão do sistema)
 - **Transacao** — Registros de receitas e despesas
 - **Recorrente** — Receitas/despesas que se repetem todo mês (salário, assinaturas)
 - **Divida** — Controle de dívidas com vínculo automático a recorrentes
 - **Banco** — Cadastro de bancos e instituições financeiras
 
-### Stored Procedures (24 procedures)
-Todas seguem o padrão com `BEGIN TRY / BEGIN CATCH`, validação de inputs com error number 50001 (JSON) e validações de sistema com severidade 16.
+### Migrations
 
-| Tabela | Sel | Ins | Upt | Del | Extras |
-|--------|-----|-----|-----|-----|--------|
-| Usuario | — | ✅ | ✅ | ✅ | Login |
-| Categoria | ✅ | ✅ | ✅ | ✅ | — |
-| Transacao | ✅ | ✅ | ✅ | ✅ | — |
-| Recorrente | ✅ | ✅ | ✅ | ✅ | — |
-| Divida | ✅ | ✅ | ✅ | ✅ | — |
-| Banco | ✅ | ✅ | ✅ | ✅ | — |
+O schema é versionado por EF Core migrations:
+
+```bash
+dotnet ef migrations add NomeDaMudanca   # depois de alterar uma entidade
+dotnet ef database update                # aplica no banco
+dotnet ef migrations list                # o que já foi aplicado
+```
+
+A migration `InitialCreate` é um **baseline**: foi gerada a partir do banco que já existia e
+registrada em `__EFMigrationsHistory` sem recriar as tabelas.
+
+### Stored Procedures (obsoletas)
+
+As 24 stored procedures do padrão anterior (`FT_[Área]_[Ação]`, com `BEGIN TRY/CATCH` e RAISERROR
+50001 em JSON) continuam no banco, mas **nenhuma é chamada pelo código**. O CRUD é LINQ sobre o
+DbContext, e a validação de input vive no `Validador`. O script
+`Banco e Procedures/BancoTabelaProcedures.sql` é mantido como histórico.
 
 ---
 
@@ -165,49 +181,53 @@ Todas seguem o padrão com `BEGIN TRY / BEGIN CATCH`, validação de inputs com 
 
 ### Pré-requisitos
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- [SQL Server](https://www.microsoft.com/sql-server) (Express ou superior)
-- [Node.js](https://nodejs.org/) (para o Tailwind CSS)
+- [Docker](https://docs.docker.com/engine/install/) (para o SQL Server)
+- `dotnet-ef` — instale com `dotnet tool install -g dotnet-ef`
 
 ### Instalação
 
 ```bash
 # Clone o repositório
-git clone https://github.com/seu-usuario/FinTrack.git
+git clone https://github.com/Isacmsm/FinTrack.git
 cd FinTrack
 
-# Instale as dependências do Tailwind
-npm install
+# Suba o SQL Server (primeira vez: cria o container)
+docker run -d --name sqlserver \
+  -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=SuaSenhaForte123" \
+  -p 1433:1433 -v sqldata:/var/opt/mssql \
+  mcr.microsoft.com/mssql/server:2025-latest
 
-# Gere o CSS
-npm run css:build
+# Nas próximas vezes, basta ligar:
+# docker start sqlserver
 
-# Configure a connection string em appsettings.Development.json (crie o arquivo se não existir)
-# O appsettings.json já tem um placeholder — não editar diretamente
+# Configure a connection string (veja abaixo)
 
-# Execute os scripts SQL para criar as tabelas e procedures
+# Crie o banco a partir das migrations
+dotnet ef database update
 
 # Rode a aplicação
 dotnet run
 ```
 
-### Configuração do Banco
+Aguarde uns 15-20 segundos após o `docker start` — o SQL Server demora a aceitar conexões mesmo
+depois de o container aparecer como *up*. Para acompanhar: `docker logs -f sqlserver`.
 
-1. Crie o database `FinTrack` no SQL Server
-2. Execute os scripts SQL para criar as tabelas
-3. Execute os scripts SQL para criar as stored procedures
-4. Configure o `sp_addmessage 50001` para o padrão de erros JSON:
-```sql
-EXEC sp_addmessage @msgnum = 50001, @severity = 10,
-    @msgtext = N'{"NomeInput": "%s", "Mensagem": "%s"}',
-    @lang = 'us_english', @replace = 'REPLACE'
+### Configuração
+
+O `appsettings.json` tem apenas um **placeholder** de connection string e não deve ser editado.
+Crie o `appsettings.Development.json` (fora do versionamento) com as credenciais reais:
+
+```json
+{
+  "ConnectionStrings": {
+    "FinTrack": "Server=localhost;Database=FinTrack;User Id=SA;Password=SuaSenhaForte123;TrustServerCertificate=True;"
+  }
+}
 ```
 
-### Scripts npm
-
-| Comando | Descrição |
-|---------|-----------|
-| `npm run css:build` | Gera o CSS do Tailwind uma vez |
-| `npm run css:watch` | Observa mudanças e regenera o CSS automaticamente |
+> O `Properties/launchSettings.json` define `ASPNETCORE_ENVIRONMENT=Development`, que é o que faz o
+> app carregar esse arquivo. Sem isso ele sobe como Production, lê o placeholder e o login falha com
+> `Login failed for user 'YOUR_USER'`.
 
 ---
 
@@ -216,31 +236,70 @@ EXEC sp_addmessage @msgnum = 50001, @severity = 10,
 ```
 FinTrack/
 ├── wwwroot/
-│   ├── css/
-│   │   ├── site.css              # Entrada do Tailwind
-│   │   └── output.css            # CSS gerado (não editar)
-│   ├── images/                   # Ícones PNG
-│   ├── js/
+│   ├── images/                       # Ícones PNG (256x256)
+│   ├── js/site.js                    # mostrarErros() e limparErros()
 │   └── lib/jquery/
+├── Models/                           # Entidades do EF Core
+│   ├── Usuario.cs
+│   ├── Categoria.cs
+│   ├── Transacao.cs
+│   ├── Recorrente.cs
+│   ├── Divida.cs
+│   └── Banco.cs
 ├── Data/
-│   ├── DaoService.cs             # Acesso a dados (padrão Log)
-│   ├── ErroExecucaoException.cs  # Tratamento de erros de SPs
-│   └── Util.cs                   # Helper para handlers (ExecutarHandler)
+│   ├── FinTrackDbContext.cs          # DbContext e mapeamentos
+│   ├── ErroValidacaoException.cs     # Validador + exceção de validação
+│   └── Util.cs                       # ExecutarHandler / ExecutarHandlerAsync
+├── Migrations/                       # Schema versionado
+├── Filters/
+│   └── VerificaSessaoFilter.cs       # Protege a pasta /App
 ├── Pages/
-│   ├── Shared/
-│   │   └── _Layout.cshtml        # Layout principal
+│   ├── Index.cshtml                  # Landing page
+│   ├── Error.cshtml
+│   ├── Shared/_Layout.cshtml         # Layout genérico
 │   ├── ControleAcesso/
-│   │   ├── Index.cshtml          # Login
-│   │   ├── Registro.cshtml       # Registro de usuário
-│   │   ├── _LayoutAcesso.cshtml  # Layout compartilhado (login/registro)
-│   │   └── _ViewStart.cshtml     # Define layout da pasta
-│   ├── Index.cshtml              # Landing page
-│   └── Error.cshtml
+│   │   ├── Index.cshtml              # Login
+│   │   ├── Registro.cshtml
+│   │   └── _LayoutAcesso.cshtml      # Layout de login/registro
+│   └── App/
+│       ├── Index.cshtml              # Dashboard (placeholder)
+│       └── _Layout.cshtml            # Header + sidebar
+├── Properties/launchSettings.json
 ├── Program.cs
-├── appsettings.json
-├── package.json
+├── appsettings.json                  # Placeholder — não editar
 └── README.md
 ```
+
+---
+
+## 🧩 Padrão de Handler
+
+Lógica em `@functions { }` dentro do `.cshtml`, sem code-behind:
+
+```csharp
+public Task<IActionResult> OnPostNomeAsync([FromBody] Request request)
+{
+    return Util.ExecutarHandlerAsync(async () =>
+    {
+        new Validador()
+            .Exigir(!string.IsNullOrWhiteSpace(request.Campo), "campo", "Informe o campo")
+            .LancarSeInvalido();
+
+        // ... lógica com o EF
+        await Db.SaveChangesAsync();
+
+        return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+    });
+}
+```
+
+O contrato de erro consumido pelo `site.js`:
+
+| Situação | Resposta |
+|----------|----------|
+| Erro de campo | `400` · `{"errosInput":[{"nomeInput":"email","mensagem":"..."}]}` |
+| Erro geral | `400` · `{"mensagem":"..."}` |
+| Sucesso | `200` · `{"sucesso":true}` |
 
 ---
 
