@@ -1,10 +1,21 @@
 using FinTrack.Data;
 using FinTrack.Filters;
+using FinTrack.Models;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddSession();
+
+builder.Services.AddDbContext<FinTrackDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("FinTrack")));
+
+// Hash de senha: implementação do próprio ASP.NET Core (PBKDF2 com salt por
+// usuário). Não requer pacote extra além do Identity.Core, que já vem no
+// framework compartilhado.
+builder.Services.AddSingleton<IPasswordHasher<Usuario>, PasswordHasher<Usuario>>();
 builder.Services.AddRazorPages(options =>
 {
     options.Conventions.AddFolderApplicationModelConvention(
@@ -12,7 +23,6 @@ builder.Services.AddRazorPages(options =>
         model => model.Filters.Add(new VerificaSessaoFilter())
     );
 }).AddRazorRuntimeCompilation();
-builder.Services.AddScoped<DaoService>();
 
 var app = builder.Build();
 

@@ -1,64 +1,91 @@
 ﻿@page
 @using Microsoft.AspNetCore.Http
 @using FinTrack.Data
-@inject DaoService Dao
+@using FinTrack.Models
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@inject IPasswordHasher<Usuario> Hasher
 @functions {
 
     public class LoginRequest
     {
-        public string Email { get; set; }
-        public string Senha { get; set; }
+        public string Email { get; set; } = "";
+        public string Senha { get; set; } = "";
     }
 
-    public class UsuarioLogado
-    {
-        public int Id { get; set; }
-        public string Nome { get; set; }
-        public string Email { get; set; }
-    }
-
-    string email;
-    string senha;
-
-    private void AlimentarVariaveis(LoginRequest request)
-    {
-        email = request.Email;
-        senha = request.Senha;
-    }
-
-    private UsuarioLogado AbreSessao()
-    {
-        var parametros = new Dictionary<string, object>
-        {
-            { "@Email", email },
-            { "@Senha", senha }
-        };
-
-        return Dao.ExecutarProcedureList<UsuarioLogado>("FT_Usuario_Login", parametros).FirstOrDefault();
-    }
-
-    private void SalvarSessao(UsuarioLogado usuario)
+    private void SalvarSessao(Usuario usuario)
     {
         HttpContext.Session.SetInt32("IdUser", usuario.Id);
         HttpContext.Session.SetString("NomeUser", usuario.Nome);
         HttpContext.Session.SetString("EmailUser", usuario.Email);
     }
 
-    public IActionResult OnPostLogin([FromBody] LoginRequest request)
+    /// <summary>
+    /// Confere a senha. Trata o caso das contas antigas, que foram gravadas em
+    /// texto puro antes da migração — nesse caso valida por comparação direta e
+    /// devolve true em <paramref name="precisaMigrar"/> para regravar com hash.
+    /// </summary>
+    private bool SenhaConfere(Usuario usuario, string senhaDigitada, out bool precisaMigrar)
     {
-        AlimentarVariaveis(request);
+        precisaMigrar = false;
 
-        return Util.ExecutarHandler(() =>
+        try
         {
-            var usuario = AbreSessao();
+            var r = Hasher.VerifyHashedPassword(usuario, usuario.Senha, senhaDigitada);
 
-            if (usuario != null)
+            if (r == PasswordVerificationResult.Success) return true;
+
+            if (r == PasswordVerificationResult.SuccessRehashNeeded)
             {
-                SalvarSessao(usuario);
-                return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+                precisaMigrar = true;
+                return true;
+            }
+        }
+        catch (FormatException)
+        {
+            // Senha antiga em texto puro não é base64 válido: o verificador
+            // estoura em vez de retornar Failed. Cai no fallback abaixo.
+        }
+
+        if (usuario.Senha == senhaDigitada)
+        {
+            precisaMigrar = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    public Task<IActionResult> OnPostLoginAsync([FromBody] LoginRequest request)
+    {
+        return Util.ExecutarHandlerAsync(async () =>
+        {
+            var email = request.Email?.Trim() ?? "";
+
+            // Mesmas validações da procedure FT_Usuario_Login.
+            new Validador()
+                .Exigir(email.Length > 0, "email", "Informe o e-mail")
+                .Exigir(!string.IsNullOrWhiteSpace(request.Senha), "senha", "Informe a senha")
+                .LancarSeInvalido();
+
+            var usuario = await Db.Usuarios.FirstOrDefaultAsync(u => u.Email == email);
+
+            // Mensagem genérica de propósito: dizer "e-mail não existe" entrega
+            // a quem está tentando adivinhar quais contas existem.
+            if (usuario is null || !SenhaConfere(usuario, request.Senha, out var precisaMigrar))
+            {
+                throw new Exception("E-mail ou senha incorretos");
             }
 
-            return new JsonResult(new { mensagem = "Erro inesperado no login" }) { StatusCode = 400 };
+            if (precisaMigrar)
+            {
+                usuario.Senha = Hasher.HashPassword(usuario, request.Senha);
+                await Db.SaveChangesAsync();
+            }
+
+            SalvarSessao(usuario);
+            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
         });
     }
 }
@@ -66,95 +93,86 @@
     ViewData["Title"] = "Login";
 }
 
-        <!-- Card de Login (esquerda) -->
-        <div class="w-full md:w-[480px] min-h-screen flex items-center justify-center p-8 md:p-12 z-10">
-            <div class="card-glass rounded-3xl shadow-2xl p-10 w-full max-w-md fade-in">
+<!-- Card de Login (esquerda) -->
+<div class="painel-login d-flex align-items-center justify-content-center p-4 p-md-5 position-relative">
+    <div class="card-glass rounded-4 shadow-lg p-4 p-md-5 w-100 fade-in" style="max-width: 28rem;">
 
-                <!-- Logo -->
-                <div class="text-center mb-8 fade-in fade-in-delay-1">
-                    <img src="~/images/carteira.png" alt="FinTrack" class="w-16 h-16 mx-auto mb-3" />
-                    <h1 class="font-display text-3xl font-bold text-slate-900">FinTrack</h1>
-                    <p class="text-slate-400 text-sm mt-1">Suas finanças no controle</p>
-                </div>
+        <!-- Logo -->
+        <div class="text-center mb-4 fade-in fade-in-delay-1">
+            <img src="~/images/carteira.png" alt="FinTrack" class="logo-login d-block mx-auto mb-3"/>
+            <h1 class="font-display fs-2 fw-bold text-dark mb-0">FinTrack</h1>
+            <p class="text-secondary small mt-1 mb-0">Suas finanças no controle</p>
+        </div>
 
-                <!-- Mensagem de boas-vindas -->
-                <div class="mb-8 fade-in fade-in-delay-2">
-                    <h2 class="font-display text-xl font-semibold text-slate-800">Bem-vindo de volta</h2>
-                    <p class="text-slate-400 text-sm mt-1">Entre na sua conta para continuar</p>
-                </div>
+        <!-- Mensagem de boas-vindas -->
+        <div class="mb-4 fade-in fade-in-delay-2">
+            <h2 class="font-display fs-5 fw-semibold text-dark mb-0">Bem-vindo de volta</h2>
+            <p class="text-secondary small mt-1 mb-0">Entre na sua conta para continuar</p>
+        </div>
 
-                <!-- Formulário -->
-                <div class="space-y-5 fade-in fade-in-delay-3" id="formLogin">
+        <!-- Formulário -->
+        <div class="fade-in fade-in-delay-3" id="formLogin">
 
-                    @Html.AntiForgeryToken()
+            @Html.AntiForgeryToken()
 
-                    <!-- E-mail -->
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1.5">E-mail</label>
-                        <input
-                            type="email"
-                            id="email"
-                            name="email"
-                            placeholder="seu@@email.com"
-                            class="w-full px-4 py-3 rounded-xl border border-slate-200 text-slate-800 placeholder-slate-300 input-focus transition-all"
-                        />
-                        <span class="text-red-500 text-xs mt-1 hidden" id="erroEmail"></span>
-                    </div>
+            <!-- E-mail -->
+            <div class="mb-3">
+                <label for="email" class="form-label small fw-medium text-dark">E-mail</label>
+                <input
+                    type="email"
+                    id="email"
+                    name="email"
+                    placeholder="seu@@email.com"
+                    class="form-control form-control-lg"
+                />
+                <span class="erro-input text-danger small d-none" id="erroEmail"></span>
+            </div>
 
-                    <!-- Senha -->
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Senha</label>
-                        <div class="relative">
-                            <input
-                                type="password"
-                                id="senha"
-                                name="senha"
-                                placeholder="••••••••"
-                                class="w-full px-4 py-3 rounded-xl border border-slate-200 text-slate-800 placeholder-slate-300 input-focus transition-all pr-12"
-                            />
-                            <button
-                                type="button"
-                                onclick="toggleSenha()"
-                                class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
-                            >
-                                <svg id="iconOlho" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                                    <path d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                                    <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                </svg>
-                            </button>
-                        </div>
-                        <span class="text-red-500 text-xs mt-1 hidden" id="erroSenha"></span>
-                    </div>
-
-                    <!-- Erro geral -->
-                    <div class="hidden bg-red-50 border border-red-200 text-red-600 text-sm rounded-xl px-4 py-3" id="erroGeral"></div>
-
-                    <!-- Botão Login -->
-                    <button
-                        type="button"
-                        onclick="fazerLogin()"
-                        class="w-full btn-login text-white font-semibold py-3.5 rounded-xl text-base"
-                        id="btnLogin"
-                    >
-                        Entrar
+            <!-- Senha -->
+            <div class="mb-3">
+                <label for="senha" class="form-label small fw-medium text-dark">Senha</label>
+                <div class="position-relative">
+                    <input
+                        type="password"
+                        id="senha"
+                        name="senha"
+                        placeholder="••••••••"
+                        class="form-control form-control-lg pe-5"
+                    />
+                    <button type="button" class="btn-olho" onclick="toggleSenha()">
+                        <svg id="iconOlho" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                            <path d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                            <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        </svg>
                     </button>
-
-                    <!-- Divisor -->
-                    <div class="divider text-slate-300 text-xs">ou</div>
-
-                    <!-- Link Registro -->
-                    <div class="text-center">
-                        <p class="text-slate-500 text-sm">
-                            Não tem uma conta?
-                            <a asp-page="/ControleAcesso/Registro" class="text-emerald-600 font-semibold hover:text-emerald-700 transition-colors">
-                                Criar conta
-                            </a>
-                        </p>
-                    </div>
                 </div>
+                <span class="erro-input text-danger small d-none" id="erroSenha"></span>
+            </div>
 
+            <!-- Erro geral: agora é o componente alert do Bootstrap -->
+            <div class="alert alert-danger py-2 px-3 small d-none" id="erroGeral"></div>
+
+            <!-- Botão Login -->
+            <button type="button" class="btn btn-login w-100 fw-semibold py-3" id="btnLogin" onclick="fazerLogin()">
+                Entrar
+            </button>
+
+            <!-- Divisor -->
+            <div class="divider text-secondary small my-3">ou</div>
+
+            <!-- Link Registro -->
+            <div class="text-center">
+                <p class="text-secondary small mb-0">
+                    Não tem uma conta?
+                    <a asp-page="/ControleAcesso/Registro" class="fw-semibold text-decoration-none" style="color: #059669;">
+                        Criar conta
+                    </a>
+                </p>
             </div>
         </div>
+
+    </div>
+</div>
 
 @section Scripts {
     <script>
