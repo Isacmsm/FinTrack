@@ -1,44 +1,78 @@
 @page
+@using System.ComponentModel.DataAnnotations
 @using FinTrack.Data
-@inject DaoService Dao
+@using FinTrack.Models
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@inject IPasswordHasher<Usuario> Hasher
 @functions {
 
     public class RegistroRequest
     {
-        public string Nome { get; set; }
-        public string Email { get; set; }
-        public string Senha { get; set; }
+        public string Nome { get; set; } = "";
+        public string Email { get; set; } = "";
+        public string Senha { get; set; } = "";
     }
 
-    string nome;
-    string email;
-    string senha;
-    
-    
-    public void AlimentarVariaveis(RegistroRequest request)
+    private static readonly EmailAddressAttribute ValidadorDeEmail = new();
+
+    /// <summary>
+    /// Equivale ao LIKE '%_@_%.__%' da procedure: exige formato de e-mail e um
+    /// ponto no domínio. Usa o validador da própria plataforma em vez de regex.
+    /// </summary>
+    private static bool EmailValido(string email)
     {
-        nome = request.Nome;
-        email = request.Email;
-        senha = request.Senha;
+        if (!ValidadorDeEmail.IsValid(email)) return false;
+
+        var dominio = email[(email.LastIndexOf('@') + 1)..];
+        return dominio.Contains('.') && dominio.Split('.')[^1].Length >= 2;
     }
 
-    public void Registrar()
+    // As mesmas regras que estavam na procedure FT_Usuario_Ins, agora em C#.
+    private static void Validar(RegistroRequest r)
     {
-        Dictionary<string, object> parametros = new Dictionary<string, object>();
-        parametros.Add("@nome", nome);
-        parametros.Add("@email", email);
-        parametros.Add("@senha", senha);
+        var nome = r.Nome?.Trim() ?? "";
+        var email = r.Email?.Trim() ?? "";
+        var senha = r.Senha ?? "";
 
-        Dao.ExecutarProcedure("FT_Usuario_Ins", parametros);
+        new Validador()
+            .Exigir(nome.Length > 0, "nome", "Informe o nome do usuário")
+            .Exigir(nome.Length == 0 || nome.Length >= 3, "nome", "O nome deve ter pelo menos 3 caracteres")
+            .Exigir(email.Length > 0, "email", "Informe o e-mail")
+            .Exigir(email.Length == 0 || EmailValido(email), "email", "Informe um e-mail válido")
+            .Exigir(senha.Length > 0, "senha", "Informe a senha")
+            .Exigir(senha.Length == 0 || senha.Length >= 6, "senha", "A senha deve ter pelo menos 6 caracteres")
+            .LancarSeInvalido();
     }
 
-    public IActionResult OnPostRegistro([FromBody] RegistroRequest request)
+    public Task<IActionResult> OnPostRegistroAsync([FromBody] RegistroRequest request)
     {
-        AlimentarVariaveis(request);
-
-        return Util.ExecutarHandler(() =>
+        return Util.ExecutarHandlerAsync(async () =>
         {
-            Registrar();
+            Validar(request);
+
+            var email = request.Email.Trim();
+
+            // Antes: IF EXISTS(SELECT Id FROM Usuario WHERE Email = @Email)
+            if (await Db.Usuarios.AnyAsync(u => u.Email == email))
+            {
+                throw new Exception("Operação cancelada. Já existe um usuário cadastrado com este e-mail");
+            }
+
+            var usuario = new Usuario
+            {
+                Nome = request.Nome.Trim(),
+                Email = email
+            };
+
+            // A senha NUNCA vai em texto puro pro banco. O PasswordHasher gera
+            // um salt aleatório por usuário e aplica PBKDF2.
+            usuario.Senha = Hasher.HashPassword(usuario, request.Senha);
+
+            Db.Usuarios.Add(usuario);
+            await Db.SaveChangesAsync();
+
             return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
         });
     }
@@ -48,97 +82,88 @@
     
 }
 
-<div class="w-full md:w-[480px] min-h-screen flex items-center justify-center p-8 md:p-12 z-10">
-    <div class="card-glass rounded-3xl shadow-2xl p-10 w-full max-w-md fade-in">
-        
-        <div class="text-center mb-8 fade-in fade-in-delay-1">
-            <img src="~/images/carteira.png" alt="FinTrack" class="w-16 h-16 mx-auto mb-3"/>
-            <h1 class="font-display text-3xl font-bold text-gray-900">FinTrack</h1>
-            <p class="text-gray-400 text-sm mt-1">Suas finanças no controle</p>
+<div class="painel-login d-flex align-items-center justify-content-center p-4 p-md-5 position-relative">
+    <div class="card-glass rounded-4 shadow-lg p-4 p-md-5 w-100 fade-in" style="max-width: 28rem;">
+
+        <div class="text-center mb-4 fade-in fade-in-delay-1">
+            <img src="~/images/carteira.png" alt="FinTrack" class="logo-login d-block mx-auto mb-3"/>
+            <h1 class="font-display fs-2 fw-bold text-dark mb-0">FinTrack</h1>
+            <p class="text-secondary small mt-1 mb-0">Suas finanças no controle</p>
         </div>
-        
-        <div class="mb-8 fade-in fade-in-delay-2">
-            <h2 class="font-display text-xl font-semibold text-gray-800">Crie sua conta</h2>
-            <p class="text-gray-400 text-sm mt-1">Seu controle financeiro começa agora</p>
+
+        <div class="mb-4 fade-in fade-in-delay-2">
+            <h2 class="font-display fs-5 fw-semibold text-dark mb-0">Crie sua conta</h2>
+            <p class="text-secondary small mt-1 mb-0">Seu controle financeiro começa agora</p>
         </div>
-        
+
         <!-- Formulário -->
-        <div class="space-y-5 fade-in fade-in-delay-3" id="formRegistro">
+        <div class="fade-in fade-in-delay-3" id="formRegistro">
 
             @Html.AntiForgeryToken()
-                    
+
             <!-- Nome -->
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1.5">Nome Completo</label>
+            <div class="mb-3">
+                <label for="nome" class="form-label small fw-medium text-dark">Nome Completo</label>
                 <input
                     type="text"
                     id="nome"
                     name="nome"
                     placeholder="João Ninguém"
-                    class="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800 placeholder-gray-300 input-focus transition-all"
+                    class="form-control form-control-lg"
                 />
-                <span class="text-red-500 text-xs mt-1 hidden" id="erroNome"></span>
+                <span class="erro-input text-danger small d-none" id="erroNome"></span>
             </div>
 
             <!-- E-mail -->
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1.5">E-mail</label>
+            <div class="mb-3">
+                <label for="email" class="form-label small fw-medium text-dark">E-mail</label>
                 <input
                     type="email"
                     id="email"
                     name="email"
                     placeholder="seu@@email.com"
-                    class="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800 placeholder-gray-300 input-focus transition-all"
+                    class="form-control form-control-lg"
                 />
-                <span class="text-red-500 text-xs mt-1 hidden" id="erroEmail"></span>
+                <span class="erro-input text-danger small d-none" id="erroEmail"></span>
             </div>
 
             <!-- Senha -->
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1.5">Senha</label>
-                <div class="relative">
+            <div class="mb-3">
+                <label for="senha" class="form-label small fw-medium text-dark">Senha</label>
+                <div class="position-relative">
                     <input
                         type="password"
                         id="senha"
                         name="senha"
                         placeholder="••••••••"
-                        class="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-800 placeholder-gray-300 input-focus transition-all pr-12"
+                        class="form-control form-control-lg pe-5"
                     />
-                    <button
-                        type="button"
-                        onclick="toggleSenha()"
-                        class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-                    >
-                        <svg id="iconOlho" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                    <button type="button" class="btn-olho" onclick="toggleSenha()">
+                        <svg id="iconOlho" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
                             <path d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
                             <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
                         </svg>
                     </button>
                 </div>
-                <span class="text-red-500 text-xs mt-1 hidden" id="erroSenha"></span>
+                <span class="erro-input text-danger small d-none" id="erroSenha"></span>
             </div>
 
             <!-- Erro geral -->
-            <div class="hidden bg-red-50 border border-red-200 text-red-600 text-sm rounded-xl px-4 py-3" id="erroGeral"></div>
+            <div class="alert alert-danger py-2 px-3 small d-none" id="erroGeral"></div>
 
             <!-- Botão Registro -->
-            <button
-                type="button"
-                onclick="fazerRegistro()"
-                class="w-full btn-login text-white font-semibold py-3.5 rounded-xl text-base"
-                id="btnRegistro"
-            >
+            <button type="button" class="btn btn-login w-100 fw-semibold py-3" id="btnRegistro" onclick="fazerRegistro()">
                 Registrar
             </button>
 
             <!-- Divisor -->
-            <div class="divider text-gray-300 text-xs">ou</div>
+            <div class="divider text-secondary small my-3">ou</div>
 
-            <!-- Link Registro -->
+            <!-- Link Login -->
             <div class="text-center">
-                <p class="text-gray-500 text-sm">
+                <p class="text-secondary small mb-0">
                     Já tem uma conta?
-                    <a asp-page="/ControleAcesso/Index" class="text-emerald-600 font-semibold hover:text-emerald-700 transition-colors">
+                    <a asp-page="/ControleAcesso/Index" class="fw-semibold text-decoration-none" style="color: #059669;">
                         Entre na sua conta
                     </a>
                 </p>
@@ -146,6 +171,7 @@
         </div>
     </div>
 </div>
+@section Scripts {
 <script>
     function fazerRegistro(){
         limparErros();
@@ -200,5 +226,5 @@
             fazerRegistro();
         }
     });
-    
 </script>
+}
