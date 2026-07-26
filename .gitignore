@@ -6,7 +6,6 @@ obj/
 *.userosscache
 *.sln.docstates
 .vs/
-launchSettings.json
 
 # Configurações sensíveis
 appsettings.Development.json
