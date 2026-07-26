@@ -4,223 +4,356 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>@ViewData["Title"] - FinTrack</title>
-    <link rel="stylesheet" href="~/css/output.css" />
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <style>
+        /* Bootstrap com a identidade do FinTrack (mesmas variáveis das outras telas) */
+        :root {
+            --bs-primary: #059669;
+            --bs-primary-rgb: 5, 150, 105;
+            --bs-body-font-family: 'Plus Jakarta Sans', sans-serif;
+            --bs-body-color: #1e293b;
+            --bs-body-bg: #f8fafc;
+            --bs-border-color: #e2e8f0;
+            --bs-border-radius: .75rem;
+        }
+
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        h1, h2, h3, h4, .font-display { font-family: 'Outfit', sans-serif; }
+
+        /* ============================================================
+           Estrutura header fixo + sidebar fixa.
+           O Bootstrap não tem um componente de sidebar pronto, então
+           esta parte é CSS comum — são 3 regras.
+           ============================================================ */
+        .app-header {
+            height: 4rem;
+            z-index: 1030;
+        }
+
+        .app-sidebar {
+            position: fixed;
+            top: 4rem;
+            left: 0;
+            bottom: 0;
+            width: 16rem;
+            overflow-y: auto;
+            z-index: 1020;
+        }
+
+        .app-main {
+            margin-left: 16rem;
+            padding-top: 4rem;
+            min-height: 100vh;
+        }
+
+        /* No celular a sidebar sai da frente */
+        @@media (max-width: 767.98px) {
+            .app-sidebar { display: none; }
+            .app-main { margin-left: 0; }
+        }
+
+        .logo-quadrado {
+            width: 2.25rem;
+            height: 2.25rem;
+            background: #10b981;
+            border-radius: .5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .avatar {
+            width: 2rem;
+            height: 2rem;
+            background: #d1fae5;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #047857;
+            font-weight: 600;
+            font-size: .875rem;
+        }
+
+        /* Itens do menu lateral */
+        .menu-item {
+            display: flex;
+            align-items: center;
+            gap: .75rem;
+            padding: .5rem .75rem;
+            border-radius: .5rem;
+            color: #334155;
+            text-decoration: none;
+            font-size: .875rem;
+            font-weight: 500;
+            width: 100%;
+            background: none;
+            border: none;
+            text-align: left;
+            transition: background-color .15s;
+        }
+
+        .menu-item:hover {
+            background: #f1f5f9;
+            color: #334155;
+        }
+
+        .submenu-link {
+            display: block;
+            padding: .375rem .75rem;
+            font-size: .875rem;
+            color: #475569;
+            text-decoration: none;
+            border-radius: .5rem;
+            transition: color .15s;
+        }
+
+        .submenu-link:hover { color: #059669; }
+
+        /* A seta gira sozinha: o Bootstrap mantém aria-expanded no botão.
+           Antes isto era jQuery com toggleClass('rotate-180'). */
+        .menu-seta { transition: transform .2s ease; }
+        .menu-item[aria-expanded="true"] .menu-seta { transform: rotate(180deg); }
+
+        .btn-icone {
+            background: none;
+            border: none;
+            padding: .5rem;
+            border-radius: .5rem;
+            color: #475569;
+            position: relative;
+            transition: background-color .15s;
+        }
+
+        .btn-icone:hover { background: #f1f5f9; }
+
+        .badge-notificacao {
+            position: absolute;
+            top: .25rem;
+            right: .25rem;
+            width: .5rem;
+            height: .5rem;
+            background: #ef4444;
+            border-radius: 50%;
+        }
+    </style>
 </head>
-<body class="bg-slate-50 min-h-screen antialiased">
+<body>
 
     <!-- ============ HEADER ============ -->
-    <header class="bg-white border-b border-slate-200 fixed top-0 left-0 right-0 h-16 z-30 flex items-center justify-between px-6">
-        
+    <header class="app-header fixed-top bg-white border-bottom d-flex align-items-center justify-content-between px-4">
+
         <!-- Logo -->
-        <a href="/App" class="flex items-center gap-2">
-            <div class="w-9 h-9 bg-emerald-500 rounded-lg flex items-center justify-center">
-                <span class="text-white font-bold text-lg">F</span>
+        <a href="/App" class="d-flex align-items-center gap-2 text-decoration-none">
+            <div class="logo-quadrado">
+                <span class="text-white fw-bold fs-5">F</span>
             </div>
-            <span class="text-xl font-bold text-slate-800">FinTrack</span>
+            <span class="fs-5 fw-bold text-dark">FinTrack</span>
         </a>
 
         <!-- Ações do header -->
-        <div class="flex items-center gap-4">
-            
+        <div class="d-flex align-items-center gap-3">
+
             <!-- Notificações -->
-            <button class="relative p-2 hover:bg-slate-100 rounded-lg transition">
-                <svg class="w-6 h-6 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <button class="btn-icone" type="button">
+                <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
                 </svg>
-                <span class="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+                <span class="badge-notificacao"></span>
             </button>
 
-            <!-- Perfil dropdown -->
-            <div class="relative" id="perfilDropdown">
-                <button class="flex items-center gap-2 p-2 hover:bg-slate-100 rounded-lg transition" id="btnPerfil">
-                    <div class="w-8 h-8 bg-emerald-100 rounded-full flex items-center justify-center">
-                        <span class="text-emerald-700 font-semibold text-sm">
-                            @(((Context.Session.GetString("NomeUser") ?? "U"))[0])
-                        </span>
+            <!-- Perfil: componente dropdown do Bootstrap.
+                 Antes eram 3 handlers jQuery (abrir, fechar, clicar fora). -->
+            <div class="dropdown">
+                <button class="btn-icone d-flex align-items-center gap-2" type="button"
+                        data-bs-toggle="dropdown" aria-expanded="false">
+                    <div class="avatar">
+                        @(((Context.Session.GetString("NomeUser") ?? "U"))[0])
                     </div>
-                    <span class="text-sm font-medium text-slate-700">
+                    <span class="small fw-medium text-body">
                         @Context.Session.GetString("NomeUser")
                     </span>
-                    <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
                     </svg>
                 </button>
-
-                <!-- Menu dropdown -->
-                <div class="hidden absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1" id="menuPerfil">
-                    <a href="/App/Perfil" class="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Meu perfil</a>
-                    <hr class="my-1 border-slate-200"/>
-                    <a href="/ControleAcesso/Sair" class="block px-4 py-2 text-sm text-red-600 hover:bg-red-50">Sair</a>
-                </div>
+                <ul class="dropdown-menu dropdown-menu-end shadow">
+                    <li><a class="dropdown-item" href="/App/Perfil">Meu perfil</a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item text-danger" href="/ControleAcesso/Sair">Sair</a></li>
+                </ul>
             </div>
         </div>
     </header>
 
     <!-- ============ MENU LATERAL ============ -->
-    <aside class="fixed top-16 left-0 bottom-0 w-64 bg-white border-r border-slate-200 overflow-y-auto z-20">
-        <nav class="p-4 space-y-1">
-            
+    <aside class="app-sidebar bg-white border-end">
+        <nav class="p-3 d-grid gap-1">
+
             <!-- Dashboard -->
-            <a href="/App" class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <a href="/App" class="menu-item">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
                 </svg>
-                <span class="text-sm font-medium">Dashboard</span>
+                <span>Dashboard</span>
             </a>
 
             <!-- Controle Financeiro -->
-            <div class="menu-grupo">
-                <button class="menu-toggle w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
-                    <div class="flex items-center gap-3">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div>
+                <button class="menu-item justify-content-between" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#menuFinanceiro" aria-expanded="false">
+                    <span class="d-flex align-items-center gap-3">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                         </svg>
-                        <span class="text-sm font-medium">Controle Financeiro</span>
-                    </div>
-                    <svg class="menu-seta w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        Controle Financeiro
+                    </span>
+                    <svg class="menu-seta" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
                     </svg>
                 </button>
-                <div class="menu-submenu hidden ml-8 mt-1 space-y-1">
-                    <a href="/App/ControleFinanceiro/Transacoes" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Transações</a>
-                    <a href="/App/ControleFinanceiro/Categorias" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Categorias</a>
-                    <a href="/App/ControleFinanceiro/Recorrentes" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Recorrentes</a>
-                    <a href="/App/ControleFinanceiro/Orcamento" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Orçamento</a>
+                <div class="collapse ms-4 mt-1" id="menuFinanceiro">
+                    <div class="d-grid gap-1">
+                        <a href="/App/ControleFinanceiro/Transacoes" class="submenu-link">Transações</a>
+                        <a href="/App/ControleFinanceiro/Categorias" class="submenu-link">Categorias</a>
+                        <a href="/App/ControleFinanceiro/Recorrentes" class="submenu-link">Recorrentes</a>
+                        <a href="/App/ControleFinanceiro/Orcamento" class="submenu-link">Orçamento</a>
+                    </div>
                 </div>
             </div>
 
             <!-- Cartões -->
-            <div class="menu-grupo">
-                <button class="menu-toggle w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
-                    <div class="flex items-center gap-3">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div>
+                <button class="menu-item justify-content-between" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#menuCartoes" aria-expanded="false">
+                    <span class="d-flex align-items-center gap-3">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/>
                         </svg>
-                        <span class="text-sm font-medium">Cartões</span>
-                    </div>
-                    <svg class="menu-seta w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        Cartões
+                    </span>
+                    <svg class="menu-seta" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
                     </svg>
                 </button>
-                <div class="menu-submenu hidden ml-8 mt-1 space-y-1">
-                    <a href="/App/Cartoes/Cartoes" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Meus cartões</a>
-                    <a href="/App/Cartoes/Faturas" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Faturas</a>
-                    <a href="/App/Cartoes/Parcelas" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Parcelas</a>
+                <div class="collapse ms-4 mt-1" id="menuCartoes">
+                    <div class="d-grid gap-1">
+                        <a href="/App/Cartoes/Cartoes" class="submenu-link">Meus cartões</a>
+                        <a href="/App/Cartoes/Faturas" class="submenu-link">Faturas</a>
+                        <a href="/App/Cartoes/Parcelas" class="submenu-link">Parcelas</a>
+                    </div>
                 </div>
             </div>
 
             <!-- Investimentos -->
-            <div class="menu-grupo">
-                <button class="menu-toggle w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
-                    <div class="flex items-center gap-3">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div>
+                <button class="menu-item justify-content-between" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#menuInvestimentos" aria-expanded="false">
+                    <span class="d-flex align-items-center gap-3">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
                         </svg>
-                        <span class="text-sm font-medium">Investimentos</span>
-                    </div>
-                    <svg class="menu-seta w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        Investimentos
+                    </span>
+                    <svg class="menu-seta" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
                     </svg>
                 </button>
-                <div class="menu-submenu hidden ml-8 mt-1 space-y-1">
-                    <a href="/App/Investimentos/Aplicacoes" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Aplicações</a>
-                    <a href="/App/Investimentos/Metas" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Metas</a>
+                <div class="collapse ms-4 mt-1" id="menuInvestimentos">
+                    <div class="d-grid gap-1">
+                        <a href="/App/Investimentos/Aplicacoes" class="submenu-link">Aplicações</a>
+                        <a href="/App/Investimentos/Metas" class="submenu-link">Metas</a>
+                    </div>
                 </div>
             </div>
 
             <!-- Simuladores -->
-            <div class="menu-grupo">
-                <button class="menu-toggle w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
-                    <div class="flex items-center gap-3">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div>
+                <button class="menu-item justify-content-between" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#menuSimuladores" aria-expanded="false">
+                    <span class="d-flex align-items-center gap-3">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
                         </svg>
-                        <span class="text-sm font-medium">Simuladores</span>
-                    </div>
-                    <svg class="menu-seta w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        Simuladores
+                    </span>
+                    <svg class="menu-seta" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
                     </svg>
                 </button>
-                <div class="menu-submenu hidden ml-8 mt-1 space-y-1">
-                    <a href="/App/Simuladores/SalarioHora" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Salário-hora</a>
-                    <a href="/App/Simuladores/AVistaVsAPrazo" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">À vista vs a prazo</a>
-                    <a href="/App/Simuladores/ComprarVsAlugar" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Comprar vs alugar</a>
-                    <a href="/App/Simuladores/QuantoQueroGanhar" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Quanto quero ganhar</a>
+                <div class="collapse ms-4 mt-1" id="menuSimuladores">
+                    <div class="d-grid gap-1">
+                        <a href="/App/Simuladores/SalarioHora" class="submenu-link">Salário-hora</a>
+                        <a href="/App/Simuladores/AVistaVsAPrazo" class="submenu-link">À vista vs a prazo</a>
+                        <a href="/App/Simuladores/ComprarVsAlugar" class="submenu-link">Comprar vs alugar</a>
+                        <a href="/App/Simuladores/QuantoQueroGanhar" class="submenu-link">Quanto quero ganhar</a>
+                    </div>
                 </div>
             </div>
 
             <!-- Relatórios -->
-            <div class="menu-grupo">
-                <button class="menu-toggle w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
-                    <div class="flex items-center gap-3">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div>
+                <button class="menu-item justify-content-between" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#menuRelatorios" aria-expanded="false">
+                    <span class="d-flex align-items-center gap-3">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                         </svg>
-                        <span class="text-sm font-medium">Relatórios</span>
-                    </div>
-                    <svg class="menu-seta w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        Relatórios
+                    </span>
+                    <svg class="menu-seta" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
                     </svg>
                 </button>
-                <div class="menu-submenu hidden ml-8 mt-1 space-y-1">
-                    <a href="/App/Relatorios/DRE" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">DRE pessoal</a>
-                    <a href="/App/Relatorios/Comparativo" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Comparativo</a>
-                    <a href="/App/Relatorios/Alertas" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Alertas</a>
+                <div class="collapse ms-4 mt-1" id="menuRelatorios">
+                    <div class="d-grid gap-1">
+                        <a href="/App/Relatorios/DRE" class="submenu-link">DRE pessoal</a>
+                        <a href="/App/Relatorios/Comparativo" class="submenu-link">Comparativo</a>
+                        <a href="/App/Relatorios/Alertas" class="submenu-link">Alertas</a>
+                    </div>
                 </div>
             </div>
 
             <!-- Planejamento Futuro -->
-            <div class="menu-grupo">
-                <button class="menu-toggle w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 transition">
-                    <div class="flex items-center gap-3">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div>
+                <button class="menu-item justify-content-between" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#menuPlanejamento" aria-expanded="false">
+                    <span class="d-flex align-items-center gap-3">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
                         </svg>
-                        <span class="text-sm font-medium">Planejamento</span>
-                    </div>
-                    <svg class="menu-seta w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        Planejamento
+                    </span>
+                    <svg class="menu-seta" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7"/>
                     </svg>
                 </button>
-                <div class="menu-submenu hidden ml-8 mt-1 space-y-1">
-                    <a href="/App/PlanejamentoFuturo/FluxoCaixa" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Fluxo de caixa</a>
-                    <a href="/App/PlanejamentoFuturo/Projecao" class="block px-3 py-1.5 text-sm text-slate-600 hover:text-emerald-600 rounded-lg transition-colors">Projeção</a>
+                <div class="collapse ms-4 mt-1" id="menuPlanejamento">
+                    <div class="d-grid gap-1">
+                        <a href="/App/PlanejamentoFuturo/FluxoCaixa" class="submenu-link">Fluxo de caixa</a>
+                        <a href="/App/PlanejamentoFuturo/Projecao" class="submenu-link">Projeção</a>
+                    </div>
                 </div>
             </div>
         </nav>
     </aside>
 
     <!-- ============ CONTEÚDO ============ -->
-    <main class="ml-64 pt-16 min-h-screen">
-        <div class="p-8">
+    <main class="app-main">
+        <div class="p-4">
             @RenderBody()
         </div>
     </main>
 
     <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
-    <script>
-        $(document).ready(function() {
-            // Toggle dos grupos do menu
-            $('.menu-toggle').on('click', function() {
-                const submenu = $(this).siblings('.menu-submenu');
-                const seta = $(this).find('.menu-seta');
-                submenu.toggleClass('hidden');
-                seta.toggleClass('rotate-180');
-            });
-
-            // Toggle do dropdown do perfil
-            $('#btnPerfil').on('click', function(e) {
-                e.stopPropagation();
-                $('#menuPerfil').toggleClass('hidden');
-            });
-
-            // Fechar dropdown ao clicar fora
-            $(document).on('click', function() {
-                $('#menuPerfil').addClass('hidden');
-            });
-        });
-    </script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>
