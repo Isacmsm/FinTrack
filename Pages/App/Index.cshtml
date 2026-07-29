@@ -1,6 +1,326 @@
 @page
+@using System.Globalization
+@using System.Text.Json
+@using Microsoft.AspNetCore.Http
+@using FinTrack.Data
+@using FinTrack.Models
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@functions {
+
+    // Mesma ordem/paleta validada pela skill dataviz (references/palette.md) —
+    // ordem fixa, nunca ciclada, pra cada categoria manter sempre a mesma cor.
+    private static readonly string[] PaletaCategorica =
+    [
+        "#2a78d6", "#eb6834", "#1baf7a", "#eda100",
+        "#e87ba4", "#008300", "#4a3aa7", "#e34948"
+    ];
+
+    private const string CorReceita = "#008300";
+    private const string CorDespesa = "#e34948";
+    private const string CorForaDoTeto = "#898781";
+
+    public decimal SaldoMes { get; set; }
+    public decimal ReceitasMes { get; set; }
+    public decimal DespesasMes { get; set; }
+    public int QuantidadeTransacoesMes { get; set; }
+
+    public List<Transacao> UltimasTransacoes { get; set; } = [];
+    public List<Divida> DividasEmAndamento { get; set; } = [];
+
+    public string DespesasPorCategoriaJson { get; set; } = "[]";
+    public string EvolucaoMensalJson { get; set; } = "{}";
+
+    private int IdUserAtual => HttpContext.Session.GetInt32("IdUser")!.Value;
+
+    public async Task OnGetAsync()
+    {
+        var idUser = IdUserAtual;
+        var hoje = DateTime.Today;
+        var inicioMes = new DateTime(hoje.Year, hoje.Month, 1);
+        var fimMes = inicioMes.AddMonths(1);
+
+        ReceitasMes = await Db.Transacoes
+            .Where(t => t.IdUser == idUser && t.Data >= inicioMes && t.Data < fimMes && !t.IdCategoriaNavigation.Tipo)
+            .SumAsync(t => (decimal?)t.Valor) ?? 0;
+
+        DespesasMes = await Db.Transacoes
+            .Where(t => t.IdUser == idUser && t.Data >= inicioMes && t.Data < fimMes && t.IdCategoriaNavigation.Tipo)
+            .SumAsync(t => (decimal?)t.Valor) ?? 0;
+
+        SaldoMes = ReceitasMes - DespesasMes;
+
+        QuantidadeTransacoesMes = await Db.Transacoes
+            .Where(t => t.IdUser == idUser && t.Data >= inicioMes && t.Data < fimMes)
+            .CountAsync();
+
+        // Despesas por categoria no mês (agregado no banco, não em memória)
+        var despesasPorCategoria = await Db.Transacoes
+            .Where(t => t.IdUser == idUser && t.Data >= inicioMes && t.Data < fimMes && t.IdCategoriaNavigation.Tipo)
+            .GroupBy(t => new { t.IdCategoria, t.IdCategoriaNavigation.Nome })
+            .Select(g => new { g.Key.IdCategoria, g.Key.Nome, Total = g.Sum(t => t.Valor) })
+            .OrderByDescending(g => g.Total)
+            .ToListAsync();
+
+        // Cor estável por categoria: definida pela posição entre TODAS as
+        // categorias de despesa do usuário, não pelo ranking do mês — assim
+        // a mesma categoria não muda de cor de um mês pro outro.
+        var todasCategoriasDespesa = await Db.Categorias
+            .Where(c => c.Tipo && (c.IdUser == null || c.IdUser == idUser))
+            .OrderBy(c => c.Id)
+            .Select(c => c.Id)
+            .ToListAsync();
+
+        // Sem módulo: uma categoria além do teto de 8 slots dobra pra cinza em
+        // vez de repetir a cor de outra (colidiria com a mesma cor da fatia 0).
+        string CorDaCategoria(int idCategoria)
+        {
+            var indice = todasCategoriasDespesa.IndexOf(idCategoria);
+            return indice >= 0 && indice < PaletaCategorica.Length ? PaletaCategorica[indice] : CorForaDoTeto;
+        }
+
+        // Token ceiling de 7 fatias (skill dataviz): o restante dobra em "Outras".
+        const int limiteCategorias = 7;
+        var principais = despesasPorCategoria.Take(limiteCategorias).ToList();
+        var restante = despesasPorCategoria.Skip(limiteCategorias).Sum(d => d.Total);
+
+        var itensGrafico = principais
+            .Select(d => new { nome = d.Nome, valor = d.Total, cor = CorDaCategoria(d.IdCategoria) })
+            .ToList<object>();
+
+        if (restante > 0)
+        {
+            itensGrafico.Add(new { nome = "Outras", valor = restante, cor = CorForaDoTeto });
+        }
+
+        DespesasPorCategoriaJson = JsonSerializer.Serialize(itensGrafico);
+
+        // Evolução dos últimos 6 meses (receita x despesa), agregada no banco.
+        var inicioEvolucao = inicioMes.AddMonths(-5);
+
+        var agregadoEvolucao = await Db.Transacoes
+            .Where(t => t.IdUser == idUser && t.Data >= inicioEvolucao && t.Data < fimMes)
+            .GroupBy(t => new { t.Data.Year, t.Data.Month, t.IdCategoriaNavigation.Tipo })
+            .Select(g => new { g.Key.Year, g.Key.Month, g.Key.Tipo, Total = g.Sum(t => t.Valor) })
+            .ToListAsync();
+
+        var culturaBr = new CultureInfo("pt-BR");
+        var categorias = new List<string>();
+        var receitas = new List<decimal>();
+        var despesas = new List<decimal>();
+
+        for (var i = 0; i < 6; i++)
+        {
+            var mesRef = inicioEvolucao.AddMonths(i);
+            categorias.Add(culturaBr.DateTimeFormat.GetAbbreviatedMonthName(mesRef.Month).ToUpper(culturaBr) + "/" + mesRef.ToString("yy"));
+
+            receitas.Add(agregadoEvolucao
+                .Where(a => a.Year == mesRef.Year && a.Month == mesRef.Month && !a.Tipo)
+                .Sum(a => a.Total));
+
+            despesas.Add(agregadoEvolucao
+                .Where(a => a.Year == mesRef.Year && a.Month == mesRef.Month && a.Tipo)
+                .Sum(a => a.Total));
+        }
+
+        EvolucaoMensalJson = JsonSerializer.Serialize(new { categorias, receitas, despesas });
+
+        UltimasTransacoes = await Db.Transacoes
+            .Include(t => t.IdCategoriaNavigation)
+            .Where(t => t.IdUser == idUser)
+            .OrderByDescending(t => t.Data)
+            .ThenByDescending(t => t.Id)
+            .Take(8)
+            .ToListAsync();
+
+        DividasEmAndamento = await Db.Dividas
+            .Where(d => d.IdUser == idUser && d.Pagando)
+            .OrderBy(d => d.Descricao)
+            .ToListAsync();
+    }
+}
 @{
     ViewData["Title"] = "Dashboard";
+    var culturaBr = new CultureInfo("pt-BR");
 }
+
 <h1 class="font-display fs-2 fw-bold text-dark">Dashboard</h1>
-<p class="text-secondary mt-2">Bem-vindo de volta!</p>
+<p class="text-secondary mt-1">Bem-vindo de volta, @HttpContext.Session.GetString("NomeUser")!</p>
+
+<div class="row g-3 my-1 mb-4">
+    <div class="col-sm-6 col-lg-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Saldo do mês</p>
+                <p class="fs-4 fw-bold @(SaldoMes >= 0 ? "text-success" : "text-danger") mb-0">
+                    @SaldoMes.ToString("C", culturaBr)
+                </p>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Receitas do mês</p>
+                <p class="fs-4 fw-bold text-success mb-0">@ReceitasMes.ToString("C", culturaBr)</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Despesas do mês</p>
+                <p class="fs-4 fw-bold text-danger mb-0">@DespesasMes.ToString("C", culturaBr)</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Transações no mês</p>
+                <p class="fs-4 fw-bold text-dark mb-0">@QuantidadeTransacoesMes</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-semibold">Despesas por categoria (mês atual)</div>
+            <div class="card-body">
+                <div id="graficoDespesasCategoria"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-semibold">Evolução mensal</div>
+            <div class="card-body">
+                <div id="graficoEvolucaoMensal"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white d-flex align-items-center justify-content-between">
+                <span class="fw-semibold">Últimas transações</span>
+                <a asp-page="/App/ControleFinanceiro/Transacoes" class="small text-decoration-none">Ver todas</a>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Data</th>
+                            <th>Descrição</th>
+                            <th>Categoria</th>
+                            <th class="text-end">Valor</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var transacao in UltimasTransacoes)
+                        {
+                            var despesa = transacao.IdCategoriaNavigation.Tipo;
+                            <tr>
+                                <td>@transacao.Data.ToString("dd/MM/yyyy")</td>
+                                <td>@transacao.Desc</td>
+                                <td>@transacao.IdCategoriaNavigation.Nome</td>
+                                <td class="text-end @(despesa ? "text-danger" : "text-success") fw-semibold">
+                                    @((despesa ? "- " : "+ "))@transacao.Valor.ToString("C", culturaBr)
+                                </td>
+                            </tr>
+                        }
+                        @if (UltimasTransacoes.Count == 0)
+                        {
+                            <tr>
+                                <td colspan="4" class="text-center text-secondary py-4">
+                                    Nenhuma transação ainda.
+                                    <a asp-page="/App/ControleFinanceiro/Transacoes" class="text-decoration-none">Lançar a primeira</a>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-semibold">Dívidas em andamento</div>
+            <ul class="list-group list-group-flush">
+                @foreach (var divida in DividasEmAndamento)
+                {
+                    <li class="list-group-item">
+                        <div class="d-flex justify-content-between">
+                            <span>@divida.Descricao</span>
+                            <span class="fw-semibold">@((divida.ValorParcela ?? 0).ToString("C", culturaBr))/mês</span>
+                        </div>
+                        <div class="text-secondary small">Parcela @divida.QntParcelasPagas de @(divida.QntParcelas?.ToString() ?? "-")</div>
+                    </li>
+                }
+                @if (DividasEmAndamento.Count == 0)
+                {
+                    <li class="list-group-item text-secondary small">Nenhuma dívida em andamento</li>
+                }
+            </ul>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const dadosDespesasCategoria = @Html.Raw(DespesasPorCategoriaJson);
+        const dadosEvolucaoMensal = @Html.Raw(EvolucaoMensalJson);
+
+        function formatarMoeda(valor) {
+            return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        }
+
+        // Despesas por categoria: barra horizontal (não pizza/donut — a skill
+        // dataviz recomenda barra pra comparação de magnitude/parte-do-todo).
+        // O valor entra direto no rótulo do eixo (não como dataLabel flutuante):
+        // numa barra curta, o dataLabel colide com o fim da barra e fica ilegível.
+        if (dadosDespesasCategoria.length > 0) {
+            const rotulosComValor = dadosDespesasCategoria.map(d => `${d.nome}: ${formatarMoeda(d.valor)}`);
+
+            new ApexCharts(document.querySelector('#graficoDespesasCategoria'), {
+                chart: { type: 'bar', height: 320, toolbar: { show: false }, fontFamily: 'Plus Jakarta Sans, sans-serif' },
+                plotOptions: { bar: { horizontal: true, distributed: true, barHeight: '60%' } },
+                series: [{ name: 'Despesas', data: dadosDespesasCategoria.map(d => d.valor) }],
+                colors: dadosDespesasCategoria.map(d => d.cor),
+                legend: { show: false },
+                dataLabels: { enabled: false },
+                xaxis: {
+                    categories: rotulosComValor,
+                    labels: { show: false }
+                },
+                grid: { xaxis: { lines: { show: false } } },
+                tooltip: { y: { formatter: function (val) { return formatarMoeda(val); } } }
+            }).render();
+        } else {
+            document.querySelector('#graficoDespesasCategoria').innerHTML =
+                '<p class="text-secondary small text-center py-5 mb-0">Sem despesas registradas neste mês</p>';
+        }
+
+        // Evolução mensal: receita x despesa, cores fixas (verde/vermelho),
+        // convenção universal em finanças pessoais.
+        new ApexCharts(document.querySelector('#graficoEvolucaoMensal'), {
+            chart: { type: 'line', height: 320, toolbar: { show: false }, fontFamily: 'Plus Jakarta Sans, sans-serif' },
+            series: [
+                { name: 'Receitas', data: dadosEvolucaoMensal.receitas },
+                { name: 'Despesas', data: dadosEvolucaoMensal.despesas }
+            ],
+            colors: ['@CorReceita', '@CorDespesa'],
+            stroke: { width: 3, curve: 'smooth' },
+            markers: { size: 4 },
+            xaxis: { categories: dadosEvolucaoMensal.categorias },
+            yaxis: { labels: { formatter: function (val) { return formatarMoeda(val); } } },
+            legend: { position: 'top' },
+            tooltip: { y: { formatter: function (val) { return formatarMoeda(val); } } }
+        }).render();
+    </script>
+}

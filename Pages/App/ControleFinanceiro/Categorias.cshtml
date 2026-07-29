@@ -1,0 +1,279 @@
+@page
+@using Microsoft.AspNetCore.Http
+@using FinTrack.Data
+@using FinTrack.Models
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@functions {
+
+    public List<Categoria> Receitas { get; set; } = [];
+    public List<Categoria> Despesas { get; set; } = [];
+
+    public class CategoriaRequest
+    {
+        public int? Id { get; set; }
+        public string Nome { get; set; } = "";
+        public bool Tipo { get; set; }
+    }
+
+    public class ExcluirRequest
+    {
+        public int Id { get; set; }
+    }
+
+    private int IdUserAtual => HttpContext.Session.GetInt32("IdUser")!.Value;
+
+    public async Task OnGetAsync()
+    {
+        var idUser = IdUserAtual;
+
+        var categorias = await Db.Categorias
+            .Where(c => c.IdUser == null || c.IdUser == idUser)
+            .OrderBy(c => c.Nome)
+            .ToListAsync();
+
+        Receitas = categorias.Where(c => !c.Tipo).ToList();
+        Despesas = categorias.Where(c => c.Tipo).ToList();
+    }
+
+    public Task<IActionResult> OnPostSalvarAsync([FromBody] CategoriaRequest request)
+    {
+        return Util.ExecutarHandlerAsync(async () =>
+        {
+            var nome = request.Nome?.Trim() ?? "";
+
+            new Validador()
+                .Exigir(!string.IsNullOrWhiteSpace(nome), "nome", "Informe o nome da categoria")
+                .LancarSeInvalido();
+
+            var idUser = IdUserAtual;
+
+            if (request.Id is int id)
+            {
+                var categoria = await Db.Categorias.FirstOrDefaultAsync(c => c.Id == id && c.IdUser == idUser);
+                if (categoria is null) throw new Exception("Categoria não encontrada");
+
+                categoria.Nome = nome;
+                categoria.Tipo = request.Tipo;
+            }
+            else
+            {
+                Db.Categorias.Add(new Categoria { Nome = nome, Tipo = request.Tipo, IdUser = idUser });
+            }
+
+            await Db.SaveChangesAsync();
+            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+        });
+    }
+
+    public Task<IActionResult> OnPostExcluirAsync([FromBody] ExcluirRequest request)
+    {
+        return Util.ExecutarHandlerAsync(async () =>
+        {
+            var idUser = IdUserAtual;
+            var categoria = await Db.Categorias.FirstOrDefaultAsync(c => c.Id == request.Id && c.IdUser == idUser);
+            if (categoria is null) throw new Exception("Categoria não encontrada");
+
+            var emUso = await Db.Transacoes.AnyAsync(t => t.IdCategoria == categoria.Id)
+                        || await Db.Recorrentes.AnyAsync(r => r.IdCategoria == categoria.Id);
+
+            if (emUso) throw new Exception("Esta categoria está em uso e não pode ser excluída");
+
+            Db.Categorias.Remove(categoria);
+            await Db.SaveChangesAsync();
+            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+        });
+    }
+}
+@{
+    ViewData["Title"] = "Categorias";
+}
+
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <div>
+        <h1 class="font-display fs-2 fw-bold text-dark mb-0">Categorias</h1>
+        <p class="text-secondary mt-1 mb-0">Organize suas receitas e despesas</p>
+    </div>
+    <button type="button" class="btn btn-primary" onclick="abrirModalNova()">
+        + Nova categoria
+    </button>
+</div>
+
+<div class="alert alert-danger py-2 px-3 small d-none" id="erroGeral"></div>
+
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white fw-semibold">Receitas</div>
+            <ul class="list-group list-group-flush" id="listaReceitas">
+                @foreach (var categoria in Receitas)
+                {
+                    <li class="list-group-item d-flex align-items-center justify-content-between" data-id="@categoria.Id">
+                        <span>@categoria.Nome</span>
+                        <span class="d-flex align-items-center gap-2">
+                            @if (categoria.IdUser == null)
+                            {
+                                <span class="badge text-bg-light">Sistema</span>
+                            }
+                            else
+                            {
+                                <button type="button" class="btn btn-sm btn-link text-secondary p-0 btn-editar-categoria" data-id="@categoria.Id" data-nome="@categoria.Nome" data-tipo="false">Editar</button>
+                                <button type="button" class="btn btn-sm btn-link text-danger p-0 btn-excluir-categoria" data-id="@categoria.Id">Excluir</button>
+                            }
+                        </span>
+                    </li>
+                }
+                @if (Receitas.Count == 0)
+                {
+                    <li class="list-group-item text-secondary small">Nenhuma categoria de receita</li>
+                }
+            </ul>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white fw-semibold">Despesas</div>
+            <ul class="list-group list-group-flush" id="listaDespesas">
+                @foreach (var categoria in Despesas)
+                {
+                    <li class="list-group-item d-flex align-items-center justify-content-between" data-id="@categoria.Id">
+                        <span>@categoria.Nome</span>
+                        <span class="d-flex align-items-center gap-2">
+                            @if (categoria.IdUser == null)
+                            {
+                                <span class="badge text-bg-light">Sistema</span>
+                            }
+                            else
+                            {
+                                <button type="button" class="btn btn-sm btn-link text-secondary p-0 btn-editar-categoria" data-id="@categoria.Id" data-nome="@categoria.Nome" data-tipo="true">Editar</button>
+                                <button type="button" class="btn btn-sm btn-link text-danger p-0 btn-excluir-categoria" data-id="@categoria.Id">Excluir</button>
+                            }
+                        </span>
+                    </li>
+                }
+                @if (Despesas.Count == 0)
+                {
+                    <li class="list-group-item text-secondary small">Nenhuma categoria de despesa</li>
+                }
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de criação/edição -->
+<div class="modal fade" id="modalCategoria" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            @Html.AntiForgeryToken()
+            <div class="modal-header">
+                <h5 class="modal-title" id="tituloModalCategoria">Nova categoria</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="categoriaId" />
+
+                <div class="mb-3">
+                    <label for="categoriaNome" class="form-label">Nome</label>
+                    <input type="text" id="categoriaNome" class="form-control" placeholder="Ex.: Mercado" />
+                    <span class="erro-input text-danger small d-none" id="erroNome"></span>
+                </div>
+
+                <div class="mb-2">
+                    <label class="form-label d-block">Tipo</label>
+                    <div class="btn-group w-100" role="group">
+                        <input type="radio" class="btn-check" name="categoriaTipo" id="tipoReceita" value="false" autocomplete="off" checked>
+                        <label class="btn btn-outline-success" for="tipoReceita">Receita</label>
+
+                        <input type="radio" class="btn-check" name="categoriaTipo" id="tipoDespesa" value="true" autocomplete="off">
+                        <label class="btn btn-outline-danger" for="tipoDespesa">Despesa</label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="btnSalvarCategoria" onclick="salvarCategoria()">Salvar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const modalCategoria = new bootstrap.Modal(document.getElementById('modalCategoria'));
+
+        function abrirModalNova() {
+            limparErros();
+            document.getElementById('tituloModalCategoria').textContent = 'Nova categoria';
+            $('#categoriaId').val('');
+            $('#categoriaNome').val('');
+            $('#tipoReceita').prop('checked', true);
+            modalCategoria.show();
+        }
+
+        function abrirModalEditar(id, nome, despesa) {
+            limparErros();
+            document.getElementById('tituloModalCategoria').textContent = 'Editar categoria';
+            $('#categoriaId').val(id);
+            $('#categoriaNome').val(nome);
+            $(despesa ? '#tipoDespesa' : '#tipoReceita').prop('checked', true);
+            modalCategoria.show();
+        }
+
+        $(document).on('click', '.btn-editar-categoria', function () {
+            const $btn = $(this);
+            abrirModalEditar($btn.data('id'), $btn.data('nome'), $btn.data('tipo') === true || $btn.data('tipo') === 'true');
+        });
+
+        $(document).on('click', '.btn-excluir-categoria', function () {
+            excluirCategoria($(this).data('id'));
+        });
+
+        function salvarCategoria() {
+            limparErros();
+
+            const id = $('#categoriaId').val();
+            const nome = $('#categoriaNome').val();
+            const tipo = $('input[name="categoriaTipo"]:checked').val() === 'true';
+
+            $('#btnSalvarCategoria').prop('disabled', true);
+
+            $.ajax({
+                url: '/App/ControleFinanceiro/Categorias?handler=Salvar',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': $('#modalCategoria input[name="__RequestVerificationToken"]').val() },
+                data: JSON.stringify({ id: id ? parseInt(id) : null, nome: nome, tipo: tipo }),
+                success: function () {
+                    window.location.reload();
+                },
+                error: function (xhr) {
+                    $('#btnSalvarCategoria').prop('disabled', false);
+                    mostrarErros(xhr);
+                }
+            });
+        }
+
+        function excluirCategoria(id) {
+            if (!confirm('Excluir esta categoria?')) return;
+
+            $.ajax({
+                url: '/App/ControleFinanceiro/Categorias?handler=Excluir',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': $('input[name="__RequestVerificationToken"]').first().val() },
+                data: JSON.stringify({ id: id }),
+                success: function () {
+                    window.location.reload();
+                },
+                error: function (xhr) {
+                    if (xhr.status === 400 && xhr.responseJSON && xhr.responseJSON.mensagem) {
+                        alert(xhr.responseJSON.mensagem);
+                    } else {
+                        alert('Erro ao excluir categoria.');
+                    }
+                }
+            });
+        }
+    </script>
+}

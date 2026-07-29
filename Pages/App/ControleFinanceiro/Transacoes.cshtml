@@ -1,0 +1,367 @@
+@page
+@using System.Globalization
+@using Microsoft.AspNetCore.Http
+@using FinTrack.Data
+@using FinTrack.Models
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@functions {
+
+    public List<Transacao> Transacoes { get; set; } = [];
+    public List<Categoria> Categorias { get; set; } = [];
+    public string MesSelecionado { get; set; } = "";
+    public decimal TotalReceitas { get; set; }
+    public decimal TotalDespesas { get; set; }
+
+    public class TransacaoRequest
+    {
+        public int? Id { get; set; }
+        public string Descricao { get; set; } = "";
+        public decimal? Valor { get; set; }
+        public string Data { get; set; } = "";
+        public int? IdCategoria { get; set; }
+    }
+
+    public class ExcluirRequest
+    {
+        public int Id { get; set; }
+    }
+
+    private int IdUserAtual => HttpContext.Session.GetInt32("IdUser")!.Value;
+
+    private static (DateTime inicio, DateTime fim) LimitesDoMes(string mes)
+    {
+        var referencia = DateTime.TryParseExact(mes, "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)
+            ? d
+            : DateTime.Today;
+
+        var inicio = new DateTime(referencia.Year, referencia.Month, 1);
+        return (inicio, inicio.AddMonths(1));
+    }
+
+    public async Task OnGetAsync(string? mes)
+    {
+        var idUser = IdUserAtual;
+        MesSelecionado = string.IsNullOrWhiteSpace(mes) ? DateTime.Today.ToString("yyyy-MM") : mes;
+
+        var (inicio, fim) = LimitesDoMes(MesSelecionado);
+
+        Transacoes = await Db.Transacoes
+            .Include(t => t.IdCategoriaNavigation)
+            .Where(t => t.IdUser == idUser && t.Data >= inicio && t.Data < fim)
+            .OrderByDescending(t => t.Data)
+            .ThenByDescending(t => t.Id)
+            .ToListAsync();
+
+        TotalReceitas = Transacoes.Where(t => !t.IdCategoriaNavigation.Tipo).Sum(t => t.Valor);
+        TotalDespesas = Transacoes.Where(t => t.IdCategoriaNavigation.Tipo).Sum(t => t.Valor);
+
+        Categorias = await Db.Categorias
+            .Where(c => c.IdUser == null || c.IdUser == idUser)
+            .OrderBy(c => c.Nome)
+            .ToListAsync();
+    }
+
+    public Task<IActionResult> OnPostSalvarAsync([FromBody] TransacaoRequest request)
+    {
+        return Util.ExecutarHandlerAsync(async () =>
+        {
+            var descricao = request.Descricao?.Trim() ?? "";
+            var idUser = IdUserAtual;
+
+            new Validador()
+                .Exigir(!string.IsNullOrWhiteSpace(descricao), "descricao", "Informe a descrição")
+                .Exigir(request.Valor is > 0, "valor", "Informe um valor maior que zero")
+                .Exigir(request.IdCategoria is > 0, "categoria", "Selecione uma categoria")
+                .Exigir(DateTime.TryParse(request.Data, out _), "data", "Informe uma data válida")
+                .LancarSeInvalido();
+
+            var data = DateTime.Parse(request.Data);
+
+            var categoriaValida = await Db.Categorias.AnyAsync(c =>
+                c.Id == request.IdCategoria && (c.IdUser == null || c.IdUser == idUser));
+
+            if (!categoriaValida)
+            {
+                throw new Exception("Categoria inválida");
+            }
+
+            if (request.Id is int id)
+            {
+                var transacao = await Db.Transacoes.FirstOrDefaultAsync(t => t.Id == id && t.IdUser == idUser);
+                if (transacao is null) throw new Exception("Transação não encontrada");
+
+                transacao.Desc = descricao;
+                transacao.Valor = request.Valor!.Value;
+                transacao.Data = data;
+                transacao.IdCategoria = request.IdCategoria!.Value;
+            }
+            else
+            {
+                Db.Transacoes.Add(new Transacao
+                {
+                    IdUser = idUser,
+                    Desc = descricao,
+                    Valor = request.Valor!.Value,
+                    Data = data,
+                    IdCategoria = request.IdCategoria!.Value
+                });
+            }
+
+            await Db.SaveChangesAsync();
+            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+        });
+    }
+
+    public Task<IActionResult> OnPostExcluirAsync([FromBody] ExcluirRequest request)
+    {
+        return Util.ExecutarHandlerAsync(async () =>
+        {
+            var idUser = IdUserAtual;
+            var transacao = await Db.Transacoes.FirstOrDefaultAsync(t => t.Id == request.Id && t.IdUser == idUser);
+            if (transacao is null) throw new Exception("Transação não encontrada");
+
+            Db.Transacoes.Remove(transacao);
+            await Db.SaveChangesAsync();
+            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+        });
+    }
+}
+@{
+    ViewData["Title"] = "Transações";
+    var culturaBr = new CultureInfo("pt-BR");
+}
+
+<div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-3">
+    <div>
+        <h1 class="font-display fs-2 fw-bold text-dark mb-0">Transações</h1>
+        <p class="text-secondary mt-1 mb-0">Suas receitas e despesas do mês</p>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+        <input type="month" class="form-control" id="filtroMes" value="@MesSelecionado" onchange="mudarMes(this.value)" />
+        <button type="button" class="btn btn-primary text-nowrap" onclick="abrirModalNova()">+ Nova transação</button>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Receitas no mês</p>
+                <p class="fs-4 fw-bold text-success mb-0">@TotalReceitas.ToString("C", culturaBr)</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Despesas no mês</p>
+                <p class="fs-4 fw-bold text-danger mb-0">@TotalDespesas.ToString("C", culturaBr)</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Saldo do mês</p>
+                <p class="fs-4 fw-bold @((TotalReceitas - TotalDespesas) >= 0 ? "text-success" : "text-danger") mb-0">
+                    @((TotalReceitas - TotalDespesas).ToString("C", culturaBr))
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="alert alert-danger py-2 px-3 small d-none" id="erroGeral"></div>
+
+<div class="card shadow-sm">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Data</th>
+                    <th>Descrição</th>
+                    <th>Categoria</th>
+                    <th class="text-end">Valor</th>
+                    <th class="text-end">Ações</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var transacao in Transacoes)
+                {
+                    var despesa = transacao.IdCategoriaNavigation.Tipo;
+                    <tr>
+                        <td>@transacao.Data.ToString("dd/MM/yyyy")</td>
+                        <td>@transacao.Desc</td>
+                        <td>@transacao.IdCategoriaNavigation.Nome</td>
+                        <td class="text-end @(despesa ? "text-danger" : "text-success") fw-semibold">
+                            @((despesa ? "- " : "+ "))@transacao.Valor.ToString("C", culturaBr)
+                        </td>
+                        <td class="text-end">
+                            <button type="button" class="btn btn-sm btn-link text-secondary p-0 me-2 btn-editar-transacao"
+                                    data-id="@transacao.Id"
+                                    data-descricao="@transacao.Desc"
+                                    data-valor="@transacao.Valor.ToString(CultureInfo.InvariantCulture)"
+                                    data-data="@transacao.Data.ToString("yyyy-MM-dd")"
+                                    data-categoria="@transacao.IdCategoria">Editar</button>
+                            <button type="button" class="btn btn-sm btn-link text-danger p-0 btn-excluir-transacao" data-id="@transacao.Id">Excluir</button>
+                        </td>
+                    </tr>
+                }
+                @if (Transacoes.Count == 0)
+                {
+                    <tr>
+                        <td colspan="5" class="text-center text-secondary py-4">Nenhuma transação neste mês</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal de criação/edição -->
+<div class="modal fade" id="modalTransacao" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            @Html.AntiForgeryToken()
+            <div class="modal-header">
+                <h5 class="modal-title" id="tituloModalTransacao">Nova transação</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="transacaoId" />
+
+                <div class="mb-3">
+                    <label for="transacaoDescricao" class="form-label">Descrição</label>
+                    <input type="text" id="transacaoDescricao" class="form-control" placeholder="Ex.: Supermercado" />
+                    <span class="erro-input text-danger small d-none" id="erroDescricao"></span>
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-6">
+                        <label for="transacaoValor" class="form-label">Valor</label>
+                        <input type="number" step="0.01" min="0" id="transacaoValor" class="form-control" placeholder="0,00" />
+                        <span class="erro-input text-danger small d-none" id="erroValor"></span>
+                    </div>
+                    <div class="col-6">
+                        <label for="transacaoData" class="form-label">Data</label>
+                        <input type="date" id="transacaoData" class="form-control" />
+                        <span class="erro-input text-danger small d-none" id="erroData"></span>
+                    </div>
+                </div>
+
+                <div class="mb-2">
+                    <label for="transacaoCategoria" class="form-label">Categoria</label>
+                    <select id="transacaoCategoria" class="form-select">
+                        <option value="">Selecione...</option>
+                        <optgroup label="Receitas">
+                            @foreach (var categoria in Categorias.Where(c => !c.Tipo))
+                            {
+                                <option value="@categoria.Id">@categoria.Nome</option>
+                            }
+                        </optgroup>
+                        <optgroup label="Despesas">
+                            @foreach (var categoria in Categorias.Where(c => c.Tipo))
+                            {
+                                <option value="@categoria.Id">@categoria.Nome</option>
+                            }
+                        </optgroup>
+                    </select>
+                    <span class="erro-input text-danger small d-none" id="erroCategoria"></span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="btnSalvarTransacao" onclick="salvarTransacao()">Salvar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const modalTransacao = new bootstrap.Modal(document.getElementById('modalTransacao'));
+
+        function mudarMes(mes) {
+            window.location = '/App/ControleFinanceiro/Transacoes?mes=' + mes;
+        }
+
+        function abrirModalNova() {
+            limparErros();
+            document.getElementById('tituloModalTransacao').textContent = 'Nova transação';
+            $('#transacaoId').val('');
+            $('#transacaoDescricao').val('');
+            $('#transacaoValor').val('');
+            $('#transacaoData').val(new Date().toISOString().slice(0, 10));
+            $('#transacaoCategoria').val('');
+            modalTransacao.show();
+        }
+
+        function abrirModalEditar(id, descricao, valor, data, idCategoria) {
+            limparErros();
+            document.getElementById('tituloModalTransacao').textContent = 'Editar transação';
+            $('#transacaoId').val(id);
+            $('#transacaoDescricao').val(descricao);
+            $('#transacaoValor').val(valor);
+            $('#transacaoData').val(data);
+            $('#transacaoCategoria').val(idCategoria);
+            modalTransacao.show();
+        }
+
+        $(document).on('click', '.btn-editar-transacao', function () {
+            const $btn = $(this);
+            abrirModalEditar($btn.data('id'), $btn.data('descricao'), $btn.data('valor'), $btn.data('data'), $btn.data('categoria'));
+        });
+
+        $(document).on('click', '.btn-excluir-transacao', function () {
+            excluirTransacao($(this).data('id'));
+        });
+
+        function salvarTransacao() {
+            limparErros();
+
+            const id = $('#transacaoId').val();
+
+            $('#btnSalvarTransacao').prop('disabled', true);
+
+            $.ajax({
+                url: '/App/ControleFinanceiro/Transacoes?handler=Salvar',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': $('#modalTransacao input[name="__RequestVerificationToken"]').val() },
+                data: JSON.stringify({
+                    id: id ? parseInt(id) : null,
+                    descricao: $('#transacaoDescricao').val(),
+                    valor: $('#transacaoValor').val() ? parseFloat($('#transacaoValor').val()) : null,
+                    data: $('#transacaoData').val(),
+                    idCategoria: $('#transacaoCategoria').val() ? parseInt($('#transacaoCategoria').val()) : null
+                }),
+                success: function () {
+                    window.location.reload();
+                },
+                error: function (xhr) {
+                    $('#btnSalvarTransacao').prop('disabled', false);
+                    mostrarErros(xhr);
+                }
+            });
+        }
+
+        function excluirTransacao(id) {
+            if (!confirm('Excluir esta transação?')) return;
+
+            $.ajax({
+                url: '/App/ControleFinanceiro/Transacoes?handler=Excluir',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': $('input[name="__RequestVerificationToken"]').first().val() },
+                data: JSON.stringify({ id: id }),
+                success: function () {
+                    window.location.reload();
+                },
+                error: function () {
+                    alert('Erro ao excluir transação.');
+                }
+            });
+        }
+    </script>
+}
