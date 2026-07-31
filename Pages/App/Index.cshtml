@@ -41,11 +41,13 @@
         var fimMes = inicioMes.AddMonths(1);
 
         ReceitasMes = await Db.Transacoes
-            .Where(t => t.IdUser == idUser && t.Data >= inicioMes && t.Data < fimMes && !t.IdCategoriaNavigation.Tipo)
+            .Where(t => t.IdUser == idUser && t.Data >= inicioMes && t.Data < fimMes
+                        && !t.IdCategoriaNavigation.Tipo && !t.IdCategoriaNavigation.EhMovimentacaoInterna)
             .SumAsync(t => (decimal?)t.Valor) ?? 0;
 
         DespesasMes = await Db.Transacoes
-            .Where(t => t.IdUser == idUser && t.Data >= inicioMes && t.Data < fimMes && t.IdCategoriaNavigation.Tipo)
+            .Where(t => t.IdUser == idUser && t.Data >= inicioMes && t.Data < fimMes
+                        && t.IdCategoriaNavigation.Tipo && !t.IdCategoriaNavigation.EhMovimentacaoInterna)
             .SumAsync(t => (decimal?)t.Valor) ?? 0;
 
         SaldoMes = ReceitasMes - DespesasMes;
@@ -56,7 +58,8 @@
 
         // Despesas por categoria no mês (agregado no banco, não em memória)
         var despesasPorCategoria = await Db.Transacoes
-            .Where(t => t.IdUser == idUser && t.Data >= inicioMes && t.Data < fimMes && t.IdCategoriaNavigation.Tipo)
+            .Where(t => t.IdUser == idUser && t.Data >= inicioMes && t.Data < fimMes
+                        && t.IdCategoriaNavigation.Tipo && !t.IdCategoriaNavigation.EhMovimentacaoInterna)
             .GroupBy(t => new { t.IdCategoria, t.IdCategoriaNavigation.Nome })
             .Select(g => new { g.Key.IdCategoria, g.Key.Nome, Total = g.Sum(t => t.Valor) })
             .OrderByDescending(g => g.Total)
@@ -66,7 +69,7 @@
         // categorias de despesa do usuário, não pelo ranking do mês — assim
         // a mesma categoria não muda de cor de um mês pro outro.
         var todasCategoriasDespesa = await Db.Categorias
-            .Where(c => c.Tipo && (c.IdUser == null || c.IdUser == idUser))
+            .Where(c => c.Tipo && !c.EhMovimentacaoInterna && (c.IdUser == null || c.IdUser == idUser))
             .OrderBy(c => c.Id)
             .Select(c => c.Id)
             .ToListAsync();
@@ -99,7 +102,8 @@
         var inicioEvolucao = inicioMes.AddMonths(-5);
 
         var agregadoEvolucao = await Db.Transacoes
-            .Where(t => t.IdUser == idUser && t.Data >= inicioEvolucao && t.Data < fimMes)
+            .Where(t => t.IdUser == idUser && t.Data >= inicioEvolucao && t.Data < fimMes
+                        && !t.IdCategoriaNavigation.EhMovimentacaoInterna)
             .GroupBy(t => new { t.Data.Year, t.Data.Month, t.IdCategoriaNavigation.Tipo })
             .Select(g => new { g.Key.Year, g.Key.Month, g.Key.Tipo, Total = g.Sum(t => t.Valor) })
             .ToListAsync();

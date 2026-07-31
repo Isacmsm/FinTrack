@@ -1,0 +1,763 @@
+@page
+@using Microsoft.AspNetCore.DataProtection
+@using Microsoft.AspNetCore.Http
+@using FinTrack.Data
+@using FinTrack.Models
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@inject IDataProtectionProvider DataProtectionProvider
+@inject PluggyApiClient PluggyApi
+@functions {
+
+    private const string PropositoProtecao = "Pluggy.Credenciais";
+    private const int IdCategoriaOutrasReceitas = 4;
+    private const int IdCategoriaOutrasDespesas = 13;
+    private const int IdCategoriaInvestimentoAplicacao = 16;
+    private const int IdCategoriaInvestimentoResgate = 17;
+    private const int IdCategoriaPagamentoFatura = 18;
+    private const int IdCategoriaRecebimentoFatura = 19;
+
+    /// <summary>
+    /// Palavras-chave conhecidas na descrição -> categoria real do FinTrack.
+    /// Só se aplica a débitos (gasto de verdade); um crédito (estorno,
+    /// reembolso) nunca entra aqui, porque toda categoria mapeada é despesa —
+    /// jogar um crédito nela inflaria a despesa em vez de reduzir. Primeira
+    /// que bater na descrição vence. Baseado em texto pela mesma razão do
+    /// mapa de movimentação interna: ainda sem evidência real da taxonomia
+    /// própria da Pluggy (PluggyCategoria).
+    /// </summary>
+    private static readonly (string Chave, int IdCategoria)[] PalavrasChaveCategoria =
+    [
+        ("ifood", 5), ("sra cantina", 5), ("grupo madero", 5), ("farofa", 5), ("sorveteria", 5), ("emporio do pao", 5),
+        ("uber", 7),
+        ("amazon", 11), ("oboticario", 11),
+        ("totalpass", 8), ("drogaria", 8),
+        ("barbearia", 10), ("ingresso.com", 10),
+        ("claude", 12), ("anthropic", 12), ("apple.com", 12), ("discord", 12), ("nucel", 12), ("livepix", 12), ("steam", 12)
+    ];
+
+    private static int? CategoriaPorPalavraChave(string descricao)
+    {
+        foreach (var (chave, idCategoria) in PalavrasChaveCategoria)
+        {
+            if (descricao.Contains(chave, StringComparison.OrdinalIgnoreCase)) return idCategoria;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Descrições conhecidas de movimentação interna — dinheiro mudando de
+    /// lugar dentro das contas do próprio usuário (aplicação/resgate
+    /// automático de investimento, ou pagamento da própria fatura do
+    /// cartão), não receita/despesa de verdade. Cada descrição mapeia pro par
+    /// (categoria quando é débito, categoria quando é crédito). Regra
+    /// baseada em texto porque ainda não observamos se a taxonomia própria da
+    /// Pluggy (campo category/categoryId, já capturado em PluggyCategoria)
+    /// tem um valor melhor pra detectar isso.
+    /// </summary>
+    private static readonly Dictionary<string, (int Despesa, int Receita)> MapaMovimentacaoInterna = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Aplicação RDB"] = (IdCategoriaInvestimentoAplicacao, IdCategoriaInvestimentoResgate),
+        ["Resgate RDB"] = (IdCategoriaInvestimentoAplicacao, IdCategoriaInvestimentoResgate),
+        ["Aplicação em Tesouro Direto"] = (IdCategoriaInvestimentoAplicacao, IdCategoriaInvestimentoResgate),
+        ["Valor recebido de Investimentos"] = (IdCategoriaInvestimentoAplicacao, IdCategoriaInvestimentoResgate),
+        ["Valor transferido para Investimentos"] = (IdCategoriaInvestimentoAplicacao, IdCategoriaInvestimentoResgate),
+        ["Pagamento de fatura"] = (IdCategoriaPagamentoFatura, IdCategoriaRecebimentoFatura),
+        ["Pagamento recebido"] = (IdCategoriaPagamentoFatura, IdCategoriaRecebimentoFatura)
+    };
+
+    public bool TemConexao { get; set; }
+    public List<PluggyItem> Items { get; set; } = [];
+
+    public class SalvarConexaoRequest
+    {
+        public string ClientId { get; set; } = "";
+        public string ClientSecret { get; set; } = "";
+    }
+
+    public class RegistrarItemRequest
+    {
+        public string ItemId { get; set; } = "";
+    }
+
+    public class SincronizarRequest
+    {
+        public int PluggyItemId { get; set; }
+    }
+
+    public class ExcluirItemRequest
+    {
+        public int PluggyItemId { get; set; }
+    }
+
+    private int IdUserAtual => HttpContext.Session.GetInt32("IdUser")!.Value;
+
+    private IDataProtector Protetor => DataProtectionProvider.CreateProtector(PropositoProtecao);
+
+    public async Task OnGetAsync()
+    {
+        var idUser = IdUserAtual;
+
+        TemConexao = await Db.PluggyConexoes.AnyAsync(c => c.IdUser == idUser);
+        Items = await Db.PluggyItems
+            .Where(i => i.IdUser == idUser)
+            .OrderBy(i => i.NomeConector)
+            .ToListAsync();
+    }
+
+    public Task<IActionResult> OnPostSalvarConexaoAsync([FromBody] SalvarConexaoRequest request)
+    {
+        return Util.ExecutarHandlerAsync(async () =>
+        {
+            var clientId = request.ClientId?.Trim() ?? "";
+            var clientSecret = request.ClientSecret?.Trim() ?? "";
+
+            new Validador()
+                .Exigir(!string.IsNullOrWhiteSpace(clientId), "clientId", "Informe o Client ID")
+                .Exigir(!string.IsNullOrWhiteSpace(clientSecret), "clientSecret", "Informe o Client Secret")
+                .LancarSeInvalido();
+
+            // Confere as credenciais na própria Pluggy antes de gravar —
+            // se estiverem erradas, isso já lança e vira erro de validação.
+            await PluggyApi.ObterApiKeyAsync(clientId, clientSecret);
+
+            var idUser = IdUserAtual;
+            var agora = DateTime.UtcNow;
+
+            var conexao = await Db.PluggyConexoes.FirstOrDefaultAsync(c => c.IdUser == idUser);
+            if (conexao is null)
+            {
+                conexao = new PluggyConexao { IdUser = idUser, CriadoEm = agora };
+                Db.PluggyConexoes.Add(conexao);
+            }
+
+            conexao.ClientIdProtegido = Protetor.Protect(clientId);
+            conexao.ClientSecretProtegido = Protetor.Protect(clientSecret);
+            conexao.AtualizadoEm = agora;
+
+            await Db.SaveChangesAsync();
+            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+        });
+    }
+
+    public Task<IActionResult> OnPostGerarConnectTokenAsync()
+    {
+        return Util.ExecutarHandlerAsync(async () =>
+        {
+            var idUser = IdUserAtual;
+
+            var conexao = await Db.PluggyConexoes.FirstOrDefaultAsync(c => c.IdUser == idUser);
+            if (conexao is null) throw new Exception("Salve sua conexão Client ID/Secret antes de conectar um banco");
+
+            var clientId = Protetor.Unprotect(conexao.ClientIdProtegido);
+            var clientSecret = Protetor.Unprotect(conexao.ClientSecretProtegido);
+            var apiKey = await PluggyApi.ObterApiKeyAsync(clientId, clientSecret);
+
+            var connectToken = await PluggyApi.CriarConnectTokenAsync(apiKey);
+            return new JsonResult(new { connectToken }) { StatusCode = 200 };
+        });
+    }
+
+    public Task<IActionResult> OnPostRegistrarItemAsync([FromBody] RegistrarItemRequest request)
+    {
+        return Util.ExecutarHandlerAsync(async () =>
+        {
+            var itemId = request.ItemId?.Trim() ?? "";
+            var idUser = IdUserAtual;
+
+            new Validador()
+                .Exigir(!string.IsNullOrWhiteSpace(itemId), "itemId", "Informe o Item ID")
+                .LancarSeInvalido();
+
+            var conexao = await Db.PluggyConexoes.FirstOrDefaultAsync(c => c.IdUser == idUser);
+            if (conexao is null) throw new Exception("Salve sua conexão Client ID/Secret antes de registrar um banco");
+
+            var clientId = Protetor.Unprotect(conexao.ClientIdProtegido);
+            var clientSecret = Protetor.Unprotect(conexao.ClientSecretProtegido);
+            var apiKey = await PluggyApi.ObterApiKeyAsync(clientId, clientSecret);
+
+            var itemPluggy = await PluggyApi.ObterItemAsync(apiKey, itemId)
+                ?? throw new Exception("Item ID não encontrado na Pluggy");
+
+            if (await Db.PluggyItems.AnyAsync(i => i.ItemId == itemId))
+            {
+                throw new Exception("Este Item já está registrado");
+            }
+
+            var contas = await PluggyApi.ListarContasAsync(apiKey, itemId);
+            var nomeConector = NomeParaExibicao(contas, itemPluggy);
+
+            Db.PluggyItems.Add(new PluggyItem
+            {
+                IdUser = idUser,
+                ItemId = itemId,
+                NomeConector = nomeConector,
+                Status = itemPluggy.Status,
+                IconeUrl = await IconeParaExibicaoAsync(apiKey, nomeConector, itemPluggy.Connector?.ImageUrl)
+            });
+
+            await Db.SaveChangesAsync();
+            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+        });
+    }
+
+    /// <summary>
+    /// Todo Item do Meu Pluggy usa o mesmo conector "MeuPluggy", então o nome
+    /// do conector não distingue um banco do outro — usamos o nome da conta
+    /// bancária (tipo BANK), que é a instituição de verdade (ex.: "Nu
+    /// Pagamentos S.A. - Instituição de Pagamento"). Cartões (tipo CREDIT)
+    /// não entram: o nome deles é só o produto (ex.: "gold"), e listar cada
+    /// cartão vira uma lista enorme se o banco tiver vários.
+    /// </summary>
+    private static string? NomeParaExibicao(List<PluggyAccountDto> contas, PluggyItemDto? item)
+    {
+        var conta = contas.FirstOrDefault(c => c.Type == "BANK") ?? contas.FirstOrDefault();
+        return conta?.Name ?? item?.Connector?.Name;
+    }
+
+    /// <summary>
+    /// Razão social (como aparece no nome da conta) -> nome fantasia (como
+    /// está cadastrado no diretório de connectors reais da Pluggy). Só os
+    /// bancos mais comuns; ainda sem evidência real de como a razão social
+    /// vem pra cada instituição — completar conforme for aparecendo em
+    /// produção. Sem match aqui, fica no ícone genérico do MeuPluggy mesmo.
+    /// </summary>
+    private static readonly Dictionary<string, string> ApelidoPorRazaoSocial = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["nu pagamentos"] = "Nubank",
+        ["itau unibanco"] = "Itaú",
+        ["banco inter"] = "Inter",
+        ["banco bradesco"] = "Bradesco",
+        ["banco santander"] = "Santander",
+        ["banco do brasil"] = "Banco do Brasil",
+        ["caixa economica federal"] = "Caixa Econômica Federal"
+    };
+
+    private static string? TermoBuscaConectorReal(string? nomeInstituicao)
+    {
+        if (string.IsNullOrWhiteSpace(nomeInstituicao)) return null;
+
+        foreach (var (chave, apelido) in ApelidoPorRazaoSocial)
+        {
+            if (nomeInstituicao.Contains(chave, StringComparison.OrdinalIgnoreCase)) return apelido;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Tenta achar o ícone do banco de verdade a partir da razão social;
+    /// sem match na tabela de apelidos, ou sem resultado na Pluggy, cai pro
+    /// ícone genérico do connector "MeuPluggy" que o Item já trouxe.
+    /// </summary>
+    private async Task<string?> IconeParaExibicaoAsync(string apiKey, string? nomeInstituicao, string? iconeGenerico)
+    {
+        var termoBusca = TermoBuscaConectorReal(nomeInstituicao);
+        if (termoBusca is null) return iconeGenerico;
+
+        var conectorReal = await PluggyApi.BuscarConectorPorNomeAsync(apiKey, termoBusca);
+        return conectorReal?.ImageUrl ?? iconeGenerico;
+    }
+
+    public Task<IActionResult> OnPostBuscarAsync([FromBody] SincronizarRequest request)
+    {
+        return Util.ExecutarHandlerAsync(() => ImportarTransacoesAsync(request.PluggyItemId, solicitarAtualizacao: false));
+    }
+
+    public Task<IActionResult> OnPostAtualizarAsync([FromBody] SincronizarRequest request)
+    {
+        return Util.ExecutarHandlerAsync(() => ImportarTransacoesAsync(request.PluggyItemId, solicitarAtualizacao: true));
+    }
+
+    /// <summary>
+    /// Exclui o Item na Pluggy e o registro local. As transações já
+    /// importadas ficam — elas não têm FK pra PluggyItem, viram transações
+    /// normais do usuário, como se tivessem sido lançadas à mão.
+    /// </summary>
+    public Task<IActionResult> OnPostExcluirItemAsync([FromBody] ExcluirItemRequest request)
+    {
+        return Util.ExecutarHandlerAsync(async () =>
+        {
+            var idUser = IdUserAtual;
+
+            var conexao = await Db.PluggyConexoes.FirstOrDefaultAsync(c => c.IdUser == idUser);
+            if (conexao is null) throw new Exception("Conecte sua conta do Meu Pluggy antes de excluir uma conexão");
+
+            var item = await Db.PluggyItems.FirstOrDefaultAsync(i => i.Id == request.PluggyItemId && i.IdUser == idUser);
+            if (item is null) throw new Exception("Conexão bancária não encontrada");
+
+            var clientId = Protetor.Unprotect(conexao.ClientIdProtegido);
+            var clientSecret = Protetor.Unprotect(conexao.ClientSecretProtegido);
+            var apiKey = await PluggyApi.ObterApiKeyAsync(clientId, clientSecret);
+
+            await PluggyApi.ExcluirItemAsync(apiKey, item.ItemId);
+
+            Db.PluggyItems.Remove(item);
+            await Db.SaveChangesAsync();
+
+            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+        });
+    }
+
+    /// <summary>
+    /// Núcleo comum dos dois botões. "Buscar" só lê o que a Pluggy já tem;
+    /// "Atualizar" primeiro pede um PATCH /items — mas pro conector Meu
+    /// Pluggy isso é best-effort e pode não ter efeito real (a atualização de
+    /// verdade desse conector é diária/automática pela Pluggy, ou manual pelo
+    /// portal meu.pluggy.ai). Um 409 aí não é erro, só significa que já foi
+    /// atualizado recentemente, então seguimos pra ler mesmo assim.
+    /// A janela de busca é sempre fixa (90 dias), não um ponteiro que avança a
+    /// cada sincronização — evita perder silenciosamente uma transação que a
+    /// Pluggy ainda não tinha capturado da última vez.
+    /// </summary>
+    private async Task<IActionResult> ImportarTransacoesAsync(int pluggyItemId, bool solicitarAtualizacao)
+    {
+        var idUser = IdUserAtual;
+
+        var conexao = await Db.PluggyConexoes.FirstOrDefaultAsync(c => c.IdUser == idUser);
+        if (conexao is null) throw new Exception("Conecte sua conta do Meu Pluggy antes de sincronizar");
+
+        var item = await Db.PluggyItems.FirstOrDefaultAsync(i => i.Id == pluggyItemId && i.IdUser == idUser);
+        if (item is null) throw new Exception("Conexão bancária não encontrada");
+
+        var clientId = Protetor.Unprotect(conexao.ClientIdProtegido);
+        var clientSecret = Protetor.Unprotect(conexao.ClientSecretProtegido);
+        var apiKey = await PluggyApi.ObterApiKeyAsync(clientId, clientSecret);
+
+        var atualizacaoSolicitada = solicitarAtualizacao && await PluggyApi.SolicitarAtualizacaoAsync(apiKey, item.ItemId);
+
+        var itemAtualizado = await PluggyApi.ObterItemAsync(apiKey, item.ItemId);
+        item.Status = itemAtualizado?.Status;
+
+        var contas = await PluggyApi.ListarContasAsync(apiKey, item.ItemId);
+        item.NomeConector = NomeParaExibicao(contas, itemAtualizado);
+        item.IconeUrl = await IconeParaExibicaoAsync(apiKey, item.NomeConector, itemAtualizado?.Connector?.ImageUrl);
+
+        var dataDe = DateTime.Today.AddDays(-90);
+        var novasTransacoes = 0;
+
+        foreach (var conta in contas)
+        {
+            if (conta.Type == "CREDIT")
+            {
+                var faturasPluggy = await PluggyApi.ListarFaturasAsync(apiKey, conta.Id);
+                var idsFaturasPluggy = faturasPluggy.Select(f => f.Id).ToList();
+                var faturasExistentesPorId = await Db.PluggyFaturas
+                    .Where(f => idsFaturasPluggy.Contains(f.BillId))
+                    .ToDictionaryAsync(f => f.BillId);
+
+                foreach (var faturaPluggy in faturasPluggy)
+                {
+                    var valorPago = faturaPluggy.Payments?.Sum(p => p.Amount) ?? 0;
+                    var dataUltimoPagamento = faturaPluggy.Payments?.Count > 0
+                        ? faturaPluggy.Payments.Max(p => p.PaymentDate)
+                        : (DateTime?)null;
+
+                    if (faturasExistentesPorId.TryGetValue(faturaPluggy.Id, out var faturaExistente))
+                    {
+                        faturaExistente.ContaNome = conta.Name;
+                        faturaExistente.DataVencimento = faturaPluggy.DueDate;
+                        faturaExistente.DataFechamento = faturaPluggy.BillClosingDate;
+                        faturaExistente.ValorTotal = faturaPluggy.TotalAmount;
+                        faturaExistente.ValorMinimo = faturaPluggy.MinimumPaymentAmount;
+                        faturaExistente.ValorPago = valorPago;
+                        faturaExistente.DataUltimoPagamento = dataUltimoPagamento;
+                    }
+                    else
+                    {
+                        Db.PluggyFaturas.Add(new PluggyFatura
+                        {
+                            IdUser = idUser,
+                            BillId = faturaPluggy.Id,
+                            ContaPluggyId = conta.Id,
+                            ContaNome = conta.Name,
+                            DataVencimento = faturaPluggy.DueDate,
+                            DataFechamento = faturaPluggy.BillClosingDate,
+                            ValorTotal = faturaPluggy.TotalAmount,
+                            ValorMinimo = faturaPluggy.MinimumPaymentAmount,
+                            ValorPago = valorPago,
+                            DataUltimoPagamento = dataUltimoPagamento
+                        });
+                    }
+                }
+            }
+
+            var transacoesPluggy = await PluggyApi.ListarTransacoesAsync(apiKey, conta.Id, dataDe);
+
+            // Uma consulta por conta, não uma por transação: pega de uma vez
+            // as que já existem localmente pra decidir update vs insert.
+            var idsPluggy = transacoesPluggy.Select(t => t.Id).ToList();
+            var existentesPorId = await Db.Transacoes
+                .Where(x => x.PluggyTransactionId != null && idsPluggy.Contains(x.PluggyTransactionId))
+                .ToDictionaryAsync(x => x.PluggyTransactionId!);
+
+            foreach (var t in transacoesPluggy)
+            {
+                if (existentesPorId.TryGetValue(t.Id, out var existente))
+                {
+                    // Já importada — só atualiza os campos vindos da Pluggy
+                    // (merchant/conta podem ter sido adicionados depois que
+                    // essa linha foi criada), sem mexer em categoria ou valor,
+                    // que já podem ter sido ajustados manualmente pelo usuário.
+                    existente.MerchantNome = t.Merchant?.Name;
+                    existente.MerchantCnpj = t.Merchant?.Cnpj;
+                    existente.ContaPluggyId = conta.Id;
+                    existente.ContaNome = conta.Name;
+                    existente.ContaTipo = conta.Type;
+                    existente.PluggyBillId = t.CreditCardMetadata?.BillId;
+                    existente.PluggyFaturaPrevista = t.CreditCardMetadata?.BillForecastDate;
+                    existente.PluggyParcelaAtual = t.CreditCardMetadata?.InstallmentNumber;
+                    existente.PluggyParcelaTotal = t.CreditCardMetadata?.TotalInstallments;
+                    existente.PluggyValorCompraTotal = t.CreditCardMetadata?.TotalAmount;
+                    existente.PluggyDataCompra = t.CreditCardMetadata?.PurchaseDate;
+                    continue;
+                }
+
+                var receita = t.Type == "CREDIT";
+                var descricao = t.Description ?? "";
+
+                int idCategoria;
+                if (!string.IsNullOrWhiteSpace(descricao) && MapaMovimentacaoInterna.TryGetValue(descricao, out var par))
+                    idCategoria = receita ? par.Receita : par.Despesa;
+                else if (!receita && CategoriaPorPalavraChave(descricao) is int idPorPalavraChave)
+                    idCategoria = idPorPalavraChave;
+                else
+                    idCategoria = receita ? IdCategoriaOutrasReceitas : IdCategoriaOutrasDespesas;
+
+                Db.Transacoes.Add(new Transacao
+                {
+                    IdUser = idUser,
+                    Desc = string.IsNullOrWhiteSpace(t.Description) ? conta.Name : t.Description,
+                    Valor = Math.Abs(t.Amount),
+                    Data = t.Date,
+                    IdCategoria = idCategoria,
+                    PluggyTransactionId = t.Id,
+                    PluggyCategoria = t.Category,
+                    PluggyCategoriaId = t.CategoryId,
+                    MerchantNome = t.Merchant?.Name,
+                    MerchantCnpj = t.Merchant?.Cnpj,
+                    ContaPluggyId = conta.Id,
+                    ContaNome = conta.Name,
+                    ContaTipo = conta.Type,
+                    PluggyBillId = t.CreditCardMetadata?.BillId,
+                    PluggyFaturaPrevista = t.CreditCardMetadata?.BillForecastDate,
+                    PluggyParcelaAtual = t.CreditCardMetadata?.InstallmentNumber,
+                    PluggyParcelaTotal = t.CreditCardMetadata?.TotalInstallments,
+                    PluggyValorCompraTotal = t.CreditCardMetadata?.TotalAmount,
+                    PluggyDataCompra = t.CreditCardMetadata?.PurchaseDate
+                });
+                novasTransacoes++;
+            }
+        }
+
+        item.UltimaSincronizacao = DateTime.UtcNow;
+        await Db.SaveChangesAsync();
+
+        return new JsonResult(new { sucesso = true, novasTransacoes, atualizacaoSolicitada }) { StatusCode = 200 };
+    }
+}
+@{
+    ViewData["Title"] = "Meu Pluggy";
+}
+
+<h1 class="font-display fs-2 fw-bold text-dark mb-0">Meu Pluggy</h1>
+<p class="text-secondary mt-1">Importe automaticamente as transações do seu banco</p>
+
+<div class="alert alert-danger py-2 px-3 small d-none mt-3" id="erroGeral"></div>
+
+<div class="row g-4 mt-1">
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-semibold">Como conectar</div>
+            <div class="card-body small">
+                <ol class="mb-0 ps-3">
+                    <li class="mb-2">
+                        Acesse <a href="https://dashboard.pluggy.ai" target="_blank" rel="noopener">dashboard.pluggy.ai</a>,
+                        crie uma equipe e uma aplicação — isso gera seu <strong>Client ID</strong> e
+                        <strong>Client Secret</strong> pessoais.
+                    </li>
+                    <li class="mb-2">Cole essas duas credenciais no formulário ao lado e salve.</li>
+                    <li class="mb-0">
+                        Clique em <strong>Conectar novo banco</strong> e faça login na sua instituição pela
+                        janela que abre — o banco é registrado automaticamente ao terminar.
+                    </li>
+                </ol>
+                <p class="text-secondary small mt-3 mb-0">
+                    Já tem uma conta em <a href="https://meu.pluggy.ai/pt" target="_blank" rel="noopener">meu.pluggy.ai</a>
+                    com bancos conectados por lá? Use "Registrar Item ID manualmente" com o Item ID de cada um.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-semibold">
+                Credenciais @(TemConexao ? "conectadas" : "")
+            </div>
+            <div class="card-body">
+                @Html.AntiForgeryToken()
+
+                <div class="mb-3">
+                    <label for="clientId" class="form-label">Client ID</label>
+                    <input type="text" id="clientId" class="form-control" placeholder="00000000-0000-0000-0000-000000000000" />
+                    <span class="erro-input text-danger small d-none" id="erroClientId"></span>
+                </div>
+                <div class="mb-3">
+                    <label for="clientSecret" class="form-label">Client Secret</label>
+                    <input type="password" id="clientSecret" class="form-control" placeholder="••••••••••••" />
+                    <span class="erro-input text-danger small d-none" id="erroClientSecret"></span>
+                </div>
+                <button type="button" class="btn btn-primary" id="btnSalvarConexao" onclick="salvarConexao()">
+                    @(TemConexao ? "Atualizar credenciais" : "Salvar credenciais")
+                </button>
+                @if (TemConexao)
+                {
+                    <p class="text-secondary small mt-2 mb-0">
+                        Já existe uma credencial salva — só edite se quiser trocar por outra.
+                    </p>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm mt-4">
+    <div class="card-header bg-white d-flex align-items-center justify-content-between">
+        <span class="fw-semibold">Bancos conectados</span>
+        <span class="d-flex gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="abrirModalItem()">Registrar Item ID manualmente</button>
+            <button type="button" class="btn btn-sm btn-primary" id="btnConectarBanco" onclick="conectarNovoBanco()">+ Conectar novo banco</button>
+        </span>
+    </div>
+    <ul class="list-group list-group-flush" id="listaItems">
+        @foreach (var item in Items)
+        {
+            <li class="list-group-item d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center gap-2">
+                    @if (!string.IsNullOrWhiteSpace(item.IconeUrl))
+                    {
+                        <img src="@item.IconeUrl" alt="" width="32" height="32" class="rounded flex-shrink-0" />
+                    }
+                    <div>
+                        <div class="fw-medium">@(item.NomeConector ?? "Banco conectado")</div>
+                        <div class="text-secondary small">
+                            Status: @(item.Status ?? "—") ·
+                            Última sincronização: @(item.UltimaSincronizacao?.ToString("dd/MM/yyyy HH:mm") ?? "nunca")
+                        </div>
+                    </div>
+                </div>
+                <span class="d-flex gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary btn-buscar" data-id="@item.Id" title="Lê o que a Pluggy já tem, sem pedir atualização ao banco">
+                        Buscar
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-primary btn-atualizar" data-id="@item.Id" title="Pede à Pluggy pra buscar dados novos — best-effort, pode não ter efeito no Meu Pluggy. A atualização de verdade é diária/automática, ou manual em meu.pluggy.ai">
+                        Atualizar
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-danger btn-excluir" data-id="@item.Id" data-nome="@(item.NomeConector ?? "este banco")" title="Remove a conexão da Pluggy e daqui. As transações já importadas continuam no seu extrato.">
+                        Excluir
+                    </button>
+                </span>
+            </li>
+        }
+        @if (Items.Count == 0)
+        {
+            <li class="list-group-item text-secondary small">Nenhum banco registrado ainda</li>
+        }
+    </ul>
+</div>
+
+<!-- Modal registrar Item ID -->
+<div class="modal fade" id="modalItem" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Registrar Item ID</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <label for="itemId" class="form-label">Item ID</label>
+                <input type="text" id="itemId" class="form-control" placeholder="00000000-0000-0000-0000-000000000000" />
+                <span class="erro-input text-danger small d-none" id="erroItemId"></span>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="btnRegistrarItem" onclick="registrarItem()">Registrar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="https://cdn.pluggy.ai/pluggy-connect/v2.8.2/pluggy-connect.js"></script>
+    <script>
+        const modalItem = new bootstrap.Modal(document.getElementById('modalItem'));
+
+        function token() {
+            return $('input[name="__RequestVerificationToken"]').first().val();
+        }
+
+        /// Abre o widget oficial da Pluggy pro usuário logar direto no banco.
+        /// O item nasce no nosso app (não precisa de meu.pluggy.ai) e o
+        /// onSuccess já devolve o itemId pronto pra registrar.
+        function conectarNovoBanco() {
+            limparErros();
+            var $btn = $('#btnConectarBanco');
+            $btn.prop('disabled', true);
+
+            $.ajax({
+                url: '/App/Configuracoes/Pluggy?handler=GerarConnectToken',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': token() },
+                success: function (response) {
+                    $btn.prop('disabled', false);
+
+                    const connect = new PluggyConnect({
+                        connectToken: response.connectToken,
+                        includeSandbox: true,
+                        onSuccess: function (data) {
+                            registrarItemDoWidget(data.item.id);
+                        },
+                        onError: function (error) {
+                            alert('Erro ao conectar: ' + (error.message || 'tente novamente'));
+                        }
+                    });
+                    connect.init();
+                },
+                error: function (xhr) {
+                    $btn.prop('disabled', false);
+                    mostrarErros(xhr);
+                }
+            });
+        }
+
+        function registrarItemDoWidget(itemId) {
+            $.ajax({
+                url: '/App/Configuracoes/Pluggy?handler=RegistrarItem',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': token() },
+                data: JSON.stringify({ itemId: itemId }),
+                success: function () {
+                    window.location.reload();
+                },
+                error: function (xhr) {
+                    alert('Banco conectado na Pluggy, mas houve erro ao registrar no FinTrack. Tente registrar manualmente com o Item ID ' + itemId + '.');
+                }
+            });
+        }
+
+        function salvarConexao() {
+            limparErros();
+            $('#btnSalvarConexao').prop('disabled', true);
+
+            $.ajax({
+                url: '/App/Configuracoes/Pluggy?handler=SalvarConexao',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': token() },
+                data: JSON.stringify({
+                    clientId: $('#clientId').val(),
+                    clientSecret: $('#clientSecret').val()
+                }),
+                success: function () {
+                    window.location.reload();
+                },
+                error: function (xhr) {
+                    $('#btnSalvarConexao').prop('disabled', false);
+                    mostrarErros(xhr);
+                }
+            });
+        }
+
+        function abrirModalItem() {
+            limparErros();
+            $('#itemId').val('');
+            modalItem.show();
+        }
+
+        function registrarItem() {
+            limparErros();
+            $('#btnRegistrarItem').prop('disabled', true);
+
+            $.ajax({
+                url: '/App/Configuracoes/Pluggy?handler=RegistrarItem',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': token() },
+                data: JSON.stringify({ itemId: $('#itemId').val() }),
+                success: function () {
+                    window.location.reload();
+                },
+                error: function (xhr) {
+                    $('#btnRegistrarItem').prop('disabled', false);
+                    mostrarErros(xhr);
+                }
+            });
+        }
+
+        function executarImportacao($btn, handler, textoCarregando) {
+            const textoOriginal = $btn.text();
+            $btn.prop('disabled', true).text(textoCarregando);
+
+            $.ajax({
+                url: '/App/Configuracoes/Pluggy?handler=' + handler,
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': token() },
+                data: JSON.stringify({ pluggyItemId: $btn.data('id') }),
+                success: function (response) {
+                    var aviso = response.atualizacaoSolicitada
+                        ? 'Atualização solicitada à Pluggy — pode não ter efeito no Meu Pluggy (a atualização de verdade dele é diária/automática, ou manual em meu.pluggy.ai). Se já havia dados novos, eles já foram lidos agora.'
+                        : '';
+                    alert(response.novasTransacoes + ' transação(ões) nova(s).' + (aviso ? '\n' + aviso : ''));
+                    window.location.reload();
+                },
+                error: function (xhr) {
+                    $btn.prop('disabled', false).text(textoOriginal);
+                    if (xhr.status === 400 && xhr.responseJSON && xhr.responseJSON.mensagem) {
+                        alert(xhr.responseJSON.mensagem);
+                    } else {
+                        alert('Erro ao importar transações.');
+                    }
+                }
+            });
+        }
+
+        $(document).on('click', '.btn-buscar', function () {
+            executarImportacao($(this), 'Buscar', 'Buscando...');
+        });
+
+        $(document).on('click', '.btn-atualizar', function () {
+            executarImportacao($(this), 'Atualizar', 'Atualizando...');
+        });
+
+        $(document).on('click', '.btn-excluir', function () {
+            var $btn = $(this);
+            if (!confirm('Excluir a conexão com ' + $btn.data('nome') + '? As transações já importadas continuam no seu extrato.')) return;
+
+            $btn.prop('disabled', true).text('Excluindo...');
+
+            $.ajax({
+                url: '/App/Configuracoes/Pluggy?handler=ExcluirItem',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': token() },
+                data: JSON.stringify({ pluggyItemId: $btn.data('id') }),
+                success: function () {
+                    window.location.reload();
+                },
+                error: function (xhr) {
+                    $btn.prop('disabled', false).text('Excluir');
+                    if (xhr.status === 400 && xhr.responseJSON && xhr.responseJSON.mensagem) {
+                        alert(xhr.responseJSON.mensagem);
+                    } else {
+                        alert('Erro ao excluir a conexão.');
+                    }
+                }
+            });
+        });
+    </script>
+}

@@ -53,8 +53,8 @@
             .ThenByDescending(t => t.Id)
             .ToListAsync();
 
-        TotalReceitas = Transacoes.Where(t => !t.IdCategoriaNavigation.Tipo).Sum(t => t.Valor);
-        TotalDespesas = Transacoes.Where(t => t.IdCategoriaNavigation.Tipo).Sum(t => t.Valor);
+        TotalReceitas = Transacoes.Where(t => !t.IdCategoriaNavigation.Tipo && !t.IdCategoriaNavigation.EhMovimentacaoInterna).Sum(t => t.Valor);
+        TotalDespesas = Transacoes.Where(t => t.IdCategoriaNavigation.Tipo && !t.IdCategoriaNavigation.EhMovimentacaoInterna).Sum(t => t.Valor);
 
         Categorias = await Db.Categorias
             .Where(c => c.IdUser == null || c.IdUser == idUser)
