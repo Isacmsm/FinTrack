@@ -24,6 +24,14 @@ public partial class FinTrackDbContext : DbContext
 
     public virtual DbSet<Usuario> Usuarios { get; set; }
 
+    public virtual DbSet<PluggyConexao> PluggyConexoes { get; set; }
+
+    public virtual DbSet<PluggyItem> PluggyItems { get; set; }
+
+    public virtual DbSet<PluggyFatura> PluggyFaturas { get; set; }
+
+    public virtual DbSet<Orcamento> Orcamentos { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Banco>(entity =>
@@ -43,6 +51,7 @@ public partial class FinTrackDbContext : DbContext
             entity.Property(e => e.Nome)
                 .HasMaxLength(100)
                 .IsUnicode(false);
+            entity.Property(e => e.EhMovimentacaoInterna).HasDefaultValue(false);
 
             entity.HasOne(d => d.IdUserNavigation).WithMany(p => p.Categorias)
                 .HasForeignKey(d => d.IdUser)
@@ -109,6 +118,41 @@ public partial class FinTrackDbContext : DbContext
             entity.Property(e => e.Valor)
                 .HasColumnType("money")
                 .HasColumnName("valor");
+            entity.Property(e => e.PluggyTransactionId)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.PluggyCategoria)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.PluggyCategoriaId)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.MerchantNome)
+                .HasMaxLength(200)
+                .IsUnicode(false);
+            entity.Property(e => e.MerchantCnpj)
+                .HasMaxLength(20)
+                .IsUnicode(false);
+            entity.Property(e => e.ContaPluggyId)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.ContaNome)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.ContaTipo)
+                .HasMaxLength(20)
+                .IsUnicode(false);
+            entity.Property(e => e.PluggyBillId)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.PluggyFaturaPrevista)
+                .HasMaxLength(7)
+                .IsUnicode(false);
+            entity.Property(e => e.PluggyValorCompraTotal).HasColumnType("money");
+
+            entity.HasIndex(e => e.PluggyTransactionId)
+                .IsUnique()
+                .HasFilter("[PluggyTransactionId] IS NOT NULL");
 
             entity.HasOne(d => d.IdCategoriaNavigation).WithMany(p => p.Transacoes)
                 .HasForeignKey(d => d.IdCategoria)
@@ -119,6 +163,91 @@ public partial class FinTrackDbContext : DbContext
                 .HasForeignKey(d => d.IdUser)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_Transacao_Usuario");
+        });
+
+        modelBuilder.Entity<PluggyConexao>(entity =>
+        {
+            entity.ToTable("PluggyConexao");
+
+            entity.Property(e => e.ClientIdProtegido).IsUnicode(false);
+            entity.Property(e => e.ClientSecretProtegido).IsUnicode(false);
+
+            entity.HasIndex(e => e.IdUser).IsUnique();
+
+            entity.HasOne(d => d.IdUserNavigation).WithOne(p => p.PluggyConexao)
+                .HasForeignKey<PluggyConexao>(d => d.IdUser)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_PluggyConexao_Usuario");
+        });
+
+        modelBuilder.Entity<PluggyItem>(entity =>
+        {
+            entity.ToTable("PluggyItem");
+
+            entity.Property(e => e.ItemId)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.NomeConector)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.Status)
+                .HasMaxLength(50)
+                .IsUnicode(false);
+            entity.Property(e => e.IconeUrl)
+                .HasMaxLength(500)
+                .IsUnicode(false);
+
+            entity.HasIndex(e => e.ItemId).IsUnique();
+
+            entity.HasOne(d => d.IdUserNavigation).WithMany(p => p.PluggyItems)
+                .HasForeignKey(d => d.IdUser)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_PluggyItem_Usuario");
+        });
+
+        modelBuilder.Entity<PluggyFatura>(entity =>
+        {
+            entity.ToTable("PluggyFatura");
+
+            entity.Property(e => e.BillId)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.ContaPluggyId)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.ContaNome)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.ValorTotal).HasColumnType("money");
+            entity.Property(e => e.ValorMinimo).HasColumnType("money");
+            entity.Property(e => e.ValorPago).HasColumnType("money");
+            entity.Ignore(e => e.StatusPagamento);
+
+            entity.HasIndex(e => e.BillId).IsUnique();
+
+            entity.HasOne(d => d.IdUserNavigation).WithMany(p => p.PluggyFaturas)
+                .HasForeignKey(d => d.IdUser)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_PluggyFatura_Usuario");
+        });
+
+        modelBuilder.Entity<Orcamento>(entity =>
+        {
+            entity.ToTable("Orcamento");
+
+            entity.Property(e => e.Valor).HasColumnType("money");
+
+            entity.HasIndex(e => new { e.IdUser, e.IdCategoria }).IsUnique();
+
+            entity.HasOne(d => d.IdCategoriaNavigation).WithMany(p => p.Orcamentos)
+                .HasForeignKey(d => d.IdCategoria)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_Orcamento_Categoria");
+
+            entity.HasOne(d => d.IdUserNavigation).WithMany(p => p.Orcamentos)
+                .HasForeignKey(d => d.IdUser)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_Orcamento_Usuario");
         });
 
         modelBuilder.Entity<Usuario>(entity =>

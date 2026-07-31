@@ -20,4 +20,12 @@ public partial class Usuario
     public virtual ICollection<Recorrente> Recorrentes { get; set; } = new List<Recorrente>();
 
     public virtual ICollection<Transacao> Transacoes { get; set; } = new List<Transacao>();
+
+    public virtual PluggyConexao? PluggyConexao { get; set; }
+
+    public virtual ICollection<PluggyItem> PluggyItems { get; set; } = new List<PluggyItem>();
+
+    public virtual ICollection<PluggyFatura> PluggyFaturas { get; set; } = new List<PluggyFatura>();
+
+    public virtual ICollection<Orcamento> Orcamentos { get; set; } = new List<Orcamento>();
 }

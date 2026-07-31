@@ -1,6 +1,7 @@
 using FinTrack.Data;
 using FinTrack.Filters;
 using FinTrack.Models;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,6 +17,22 @@ builder.Services.AddDbContext<FinTrackDbContext>(options =>
 // usuário). Não requer pacote extra além do Identity.Core, que já vem no
 // framework compartilhado.
 builder.Services.AddSingleton<IPasswordHasher<Usuario>, PasswordHasher<Usuario>>();
+
+// Data Protection: usada pra proteger o Client ID/Secret do Meu Pluggy de
+// cada usuário (diferente do hash de senha, aqui precisa dar pra reverter,
+// já que o valor em claro é necessário pra chamar a API da Pluggy). Sem
+// PersistKeysToFileSystem as chaves são efêmeras e um restart tornaria os
+// segredos já gravados ilegíveis pra sempre.
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(builder.Environment.ContentRootPath, "keys")));
+
+// Primeira integração HTTP de saída do projeto: API da Pluggy.
+builder.Services.AddHttpClient("Pluggy", cliente =>
+{
+    cliente.BaseAddress = new Uri("https://api.pluggy.ai");
+});
+builder.Services.AddScoped<PluggyApiClient>();
+
 builder.Services.AddRazorPages(options =>
 {
     options.Conventions.AddFolderApplicationModelConvention(

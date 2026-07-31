@@ -4,6 +4,7 @@ using FinTrack.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace FinTrack.Migrations
 {
     [DbContext(typeof(FinTrackDbContext))]
-    partial class FinTrackDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260731030651_AddCreditCardMetadataTransacao")]
+    partial class AddCreditCardMetadataTransacao
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -137,33 +140,6 @@ namespace FinTrack.Migrations
                     b.ToTable("Divida", (string)null);
                 });
 
-            modelBuilder.Entity("FinTrack.Models.Orcamento", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("IdCategoria")
-                        .HasColumnType("int");
-
-                    b.Property<int>("IdUser")
-                        .HasColumnType("int");
-
-                    b.Property<decimal>("Valor")
-                        .HasColumnType("money");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IdCategoria");
-
-                    b.HasIndex("IdUser", "IdCategoria")
-                        .IsUnique();
-
-                    b.ToTable("Orcamento", (string)null);
-                });
-
             modelBuilder.Entity("FinTrack.Models.PluggyConexao", b =>
                 {
                     b.Property<int>("Id")
@@ -197,62 +173,6 @@ namespace FinTrack.Migrations
                         .IsUnique();
 
                     b.ToTable("PluggyConexao", (string)null);
-                });
-
-            modelBuilder.Entity("FinTrack.Models.PluggyFatura", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("BillId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(100)");
-
-                    b.Property<string>("ContaNome")
-                        .HasMaxLength(100)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(100)");
-
-                    b.Property<string>("ContaPluggyId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(100)");
-
-                    b.Property<DateTime?>("DataFechamento")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime?>("DataUltimoPagamento")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("DataVencimento")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("IdUser")
-                        .HasColumnType("int");
-
-                    b.Property<decimal?>("ValorMinimo")
-                        .HasColumnType("money");
-
-                    b.Property<decimal>("ValorPago")
-                        .HasColumnType("money");
-
-                    b.Property<decimal>("ValorTotal")
-                        .HasColumnType("money");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BillId")
-                        .IsUnique();
-
-                    b.HasIndex("IdUser");
-
-                    b.ToTable("PluggyFatura", (string)null);
                 });
 
             modelBuilder.Entity("FinTrack.Models.PluggyItem", b =>
@@ -512,26 +432,6 @@ namespace FinTrack.Migrations
                     b.Navigation("IdUserNavigation");
                 });
 
-            modelBuilder.Entity("FinTrack.Models.Orcamento", b =>
-                {
-                    b.HasOne("FinTrack.Models.Categoria", "IdCategoriaNavigation")
-                        .WithMany("Orcamentos")
-                        .HasForeignKey("IdCategoria")
-                        .IsRequired()
-                        .HasConstraintName("FK_Orcamento_Categoria");
-
-                    b.HasOne("FinTrack.Models.Usuario", "IdUserNavigation")
-                        .WithMany("Orcamentos")
-                        .HasForeignKey("IdUser")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("FK_Orcamento_Usuario");
-
-                    b.Navigation("IdCategoriaNavigation");
-
-                    b.Navigation("IdUserNavigation");
-                });
-
             modelBuilder.Entity("FinTrack.Models.PluggyConexao", b =>
                 {
                     b.HasOne("FinTrack.Models.Usuario", "IdUserNavigation")
@@ -540,18 +440,6 @@ namespace FinTrack.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("FK_PluggyConexao_Usuario");
-
-                    b.Navigation("IdUserNavigation");
-                });
-
-            modelBuilder.Entity("FinTrack.Models.PluggyFatura", b =>
-                {
-                    b.HasOne("FinTrack.Models.Usuario", "IdUserNavigation")
-                        .WithMany("PluggyFaturas")
-                        .HasForeignKey("IdUser")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("FK_PluggyFatura_Usuario");
 
                     b.Navigation("IdUserNavigation");
                 });
@@ -613,8 +501,6 @@ namespace FinTrack.Migrations
 
             modelBuilder.Entity("FinTrack.Models.Categoria", b =>
                 {
-                    b.Navigation("Orcamentos");
-
                     b.Navigation("Recorrentes");
 
                     b.Navigation("Transacoes");
@@ -631,11 +517,7 @@ namespace FinTrack.Migrations
 
                     b.Navigation("Dividas");
 
-                    b.Navigation("Orcamentos");
-
                     b.Navigation("PluggyConexao");
-
-                    b.Navigation("PluggyFaturas");
 
                     b.Navigation("PluggyItems");
 

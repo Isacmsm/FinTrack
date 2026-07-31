@@ -9,6 +9,7 @@ obj/
 
 # Configurações sensíveis
 appsettings.Development.json
+keys/
 
 # Node / Tailwind
 node_modules/
