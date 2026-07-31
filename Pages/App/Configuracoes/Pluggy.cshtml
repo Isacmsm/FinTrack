@@ -337,6 +337,23 @@
         var dataDe = DateTime.Today.AddDays(-90);
         var novasTransacoes = 0;
 
+        // Herda a categoria do comércio a partir da transação mais recente já
+        // categorizada pro mesmo comércio (ex.: usuário mudou "iFood" pra
+        // "Delivery" em Transações — as próximas importações seguem isso, sem
+        // depender só da lista fixa de palavras-chave).
+        var categoriaPorChaveComercio = new Dictionary<string, int>();
+        var transacoesExistentesUsuario = await Db.Transacoes
+            .Where(x => x.IdUser == idUser)
+            .OrderByDescending(x => x.Data)
+            .Select(x => new { x.MerchantNome, x.Desc, x.IdCategoria })
+            .ToListAsync();
+        foreach (var tx in transacoesExistentesUsuario)
+        {
+            var chave = ComercioHelper.ChaveComercio(tx.MerchantNome, tx.Desc);
+            if (!string.IsNullOrWhiteSpace(chave))
+                categoriaPorChaveComercio.TryAdd(chave, tx.IdCategoria);
+        }
+
         foreach (var conta in contas)
         {
             if (conta.Type == "CREDIT")
@@ -420,6 +437,8 @@
                 int idCategoria;
                 if (!string.IsNullOrWhiteSpace(descricao) && MapaMovimentacaoInterna.TryGetValue(descricao, out var par))
                     idCategoria = receita ? par.Receita : par.Despesa;
+                else if (categoriaPorChaveComercio.TryGetValue(ComercioHelper.ChaveComercio(t.Merchant?.Name, descricao), out var idPorComercio))
+                    idCategoria = idPorComercio;
                 else if (!receita && CategoriaPorPalavraChave(descricao) is int idPorPalavraChave)
                     idCategoria = idPorPalavraChave;
                 else

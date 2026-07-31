@@ -13,6 +13,12 @@
     public decimal TotalReceitas { get; set; }
     public decimal TotalDespesas { get; set; }
 
+    // Chave de comércio por transação e contagem de quantas transações do
+    // usuário (em qualquer mês) compartilham essa chave — usado pra oferecer
+    // "aplicar a categoria a todas as transações desse comércio" no modal.
+    public Dictionary<int, string> ChavesComercio { get; set; } = [];
+    public Dictionary<string, int> ContagemPorChaveComercio { get; set; } = [];
+
     public class TransacaoRequest
     {
         public int? Id { get; set; }
@@ -20,6 +26,9 @@
         public decimal? Valor { get; set; }
         public string Data { get; set; } = "";
         public int? IdCategoria { get; set; }
+        public string? NovaCategoriaNome { get; set; }
+        public bool? NovaCategoriaTipo { get; set; }
+        public bool AplicarATodasDoComercio { get; set; }
     }
 
     public class ExcluirRequest
@@ -56,6 +65,18 @@
         TotalReceitas = Transacoes.Where(t => !t.IdCategoriaNavigation.Tipo && !t.IdCategoriaNavigation.EhMovimentacaoInterna).Sum(t => t.Valor);
         TotalDespesas = Transacoes.Where(t => t.IdCategoriaNavigation.Tipo && !t.IdCategoriaNavigation.EhMovimentacaoInterna).Sum(t => t.Valor);
 
+        var todasTransacoesUsuario = await Db.Transacoes
+            .Where(t => t.IdUser == idUser)
+            .Select(t => new { t.Id, t.MerchantNome, t.Desc })
+            .ToListAsync();
+
+        foreach (var t in todasTransacoesUsuario)
+        {
+            var chave = ComercioHelper.ChaveComercio(t.MerchantNome, t.Desc);
+            ChavesComercio[t.Id] = chave;
+            ContagemPorChaveComercio[chave] = ContagemPorChaveComercio.GetValueOrDefault(chave) + 1;
+        }
+
         Categorias = await Db.Categorias
             .Where(c => c.IdUser == null || c.IdUser == idUser)
             .OrderBy(c => c.Nome)
@@ -67,34 +88,68 @@
         return Util.ExecutarHandlerAsync(async () =>
         {
             var descricao = request.Descricao?.Trim() ?? "";
+            var novaCategoriaNome = request.NovaCategoriaNome?.Trim();
             var idUser = IdUserAtual;
 
             new Validador()
                 .Exigir(!string.IsNullOrWhiteSpace(descricao), "descricao", "Informe a descrição")
                 .Exigir(request.Valor is > 0, "valor", "Informe um valor maior que zero")
-                .Exigir(request.IdCategoria is > 0, "categoria", "Selecione uma categoria")
+                .Exigir(request.IdCategoria is > 0 || !string.IsNullOrWhiteSpace(novaCategoriaNome), "categoria", "Selecione ou crie uma categoria")
                 .Exigir(DateTime.TryParse(request.Data, out _), "data", "Informe uma data válida")
                 .LancarSeInvalido();
 
             var data = DateTime.Parse(request.Data);
 
-            var categoriaValida = await Db.Categorias.AnyAsync(c =>
-                c.Id == request.IdCategoria && (c.IdUser == null || c.IdUser == idUser));
-
-            if (!categoriaValida)
+            int idCategoria;
+            if (!string.IsNullOrWhiteSpace(novaCategoriaNome))
             {
-                throw new Exception("Categoria inválida");
+                var novaCategoria = new Categoria { Nome = novaCategoriaNome, Tipo = request.NovaCategoriaTipo ?? true, IdUser = idUser };
+                Db.Categorias.Add(novaCategoria);
+                await Db.SaveChangesAsync();
+                idCategoria = novaCategoria.Id;
             }
+            else
+            {
+                var categoriaValida = await Db.Categorias.AnyAsync(c =>
+                    c.Id == request.IdCategoria && (c.IdUser == null || c.IdUser == idUser));
+
+                if (!categoriaValida)
+                {
+                    throw new Exception("Categoria inválida");
+                }
+
+                idCategoria = request.IdCategoria!.Value;
+            }
+
+            var qtdAtualizada = 0;
 
             if (request.Id is int id)
             {
                 var transacao = await Db.Transacoes.FirstOrDefaultAsync(t => t.Id == id && t.IdUser == idUser);
                 if (transacao is null) throw new Exception("Transação não encontrada");
 
+                var chaveComercio = ComercioHelper.ChaveComercio(transacao.MerchantNome, transacao.Desc);
+
                 transacao.Desc = descricao;
                 transacao.Valor = request.Valor!.Value;
                 transacao.Data = data;
-                transacao.IdCategoria = request.IdCategoria!.Value;
+                transacao.IdCategoria = idCategoria;
+
+                if (request.AplicarATodasDoComercio && !string.IsNullOrWhiteSpace(chaveComercio))
+                {
+                    var outras = await Db.Transacoes
+                        .Where(t => t.IdUser == idUser && t.Id != id)
+                        .ToListAsync();
+
+                    foreach (var outra in outras)
+                    {
+                        if (ComercioHelper.ChaveComercio(outra.MerchantNome, outra.Desc) == chaveComercio)
+                        {
+                            outra.IdCategoria = idCategoria;
+                            qtdAtualizada++;
+                        }
+                    }
+                }
             }
             else
             {
@@ -104,12 +159,12 @@
                     Desc = descricao,
                     Valor = request.Valor!.Value,
                     Data = data,
-                    IdCategoria = request.IdCategoria!.Value
+                    IdCategoria = idCategoria
                 });
             }
 
             await Db.SaveChangesAsync();
-            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+            return new JsonResult(new { sucesso = true, qtdAtualizada }) { StatusCode = 200 };
         });
     }
 
@@ -203,7 +258,9 @@
                                     data-descricao="@transacao.Desc"
                                     data-valor="@transacao.Valor.ToString(CultureInfo.InvariantCulture)"
                                     data-data="@transacao.Data.ToString("yyyy-MM-dd")"
-                                    data-categoria="@transacao.IdCategoria">Editar</button>
+                                    data-categoria="@transacao.IdCategoria"
+                                    data-chave="@ChavesComercio[transacao.Id]"
+                                    data-qtd-outras="@(ContagemPorChaveComercio[ChavesComercio[transacao.Id]] - 1)">Editar</button>
                             <button type="button" class="btn btn-sm btn-link text-danger p-0 btn-excluir-transacao" data-id="@transacao.Id">Excluir</button>
                         </td>
                     </tr>
@@ -254,6 +311,7 @@
                     <label for="transacaoCategoria" class="form-label">Categoria</label>
                     <select id="transacaoCategoria" class="form-select">
                         <option value="">Selecione...</option>
+                        <option value="nova">+ Criar nova categoria...</option>
                         <optgroup label="Receitas">
                             @foreach (var categoria in Categorias.Where(c => !c.Tipo))
                             {
@@ -268,6 +326,28 @@
                         </optgroup>
                     </select>
                     <span class="erro-input text-danger small d-none" id="erroCategoria"></span>
+                </div>
+
+                <div class="mb-3 d-none" id="blocoNovaCategoria">
+                    <label for="novaCategoriaNome" class="form-label">Nome da nova categoria</label>
+                    <input type="text" id="novaCategoriaNome" class="form-control" placeholder="Ex.: Delivery" />
+                    <div class="form-check form-check-inline mt-2">
+                        <input class="form-check-input" type="radio" name="novaCategoriaTipo" id="novaCategoriaTipoDespesa" value="despesa" checked>
+                        <label class="form-check-label small" for="novaCategoriaTipoDespesa">Despesa</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="novaCategoriaTipo" id="novaCategoriaTipoReceita" value="receita">
+                        <label class="form-check-label small" for="novaCategoriaTipoReceita">Receita</label>
+                    </div>
+                </div>
+
+                <div class="mb-2 d-none" id="blocoAplicarTodas">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="aplicarTodasComercio">
+                        <label class="form-check-label small" for="aplicarTodasComercio">
+                            Aplicar esta categoria às outras <strong id="qtdOutrasComercio"></strong> transações de "<strong id="chaveComercioTexto"></strong>" (todos os meses)
+                        </label>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -286,6 +366,16 @@
             window.location = '/App/ControleFinanceiro/Transacoes?mes=' + mes;
         }
 
+        function esconderBlocoNovaCategoria() {
+            $('#blocoNovaCategoria').addClass('d-none');
+            $('#novaCategoriaNome').val('');
+        }
+
+        function esconderBlocoAplicarTodas() {
+            $('#blocoAplicarTodas').addClass('d-none');
+            $('#aplicarTodasComercio').prop('checked', false);
+        }
+
         function abrirModalNova() {
             limparErros();
             document.getElementById('tituloModalTransacao').textContent = 'Nova transação';
@@ -294,10 +384,12 @@
             $('#transacaoValor').val('');
             $('#transacaoData').val(new Date().toISOString().slice(0, 10));
             $('#transacaoCategoria').val('');
+            esconderBlocoNovaCategoria();
+            esconderBlocoAplicarTodas();
             modalTransacao.show();
         }
 
-        function abrirModalEditar(id, descricao, valor, data, idCategoria) {
+        function abrirModalEditar(id, descricao, valor, data, idCategoria, chave, qtdOutras) {
             limparErros();
             document.getElementById('tituloModalTransacao').textContent = 'Editar transação';
             $('#transacaoId').val(id);
@@ -305,12 +397,31 @@
             $('#transacaoValor').val(valor);
             $('#transacaoData').val(data);
             $('#transacaoCategoria').val(idCategoria);
+            esconderBlocoNovaCategoria();
+
+            if (qtdOutras > 0) {
+                $('#chaveComercioTexto').text(chave);
+                $('#qtdOutrasComercio').text(qtdOutras);
+                $('#aplicarTodasComercio').prop('checked', false);
+                $('#blocoAplicarTodas').removeClass('d-none');
+            } else {
+                esconderBlocoAplicarTodas();
+            }
+
             modalTransacao.show();
         }
 
+        $('#transacaoCategoria').on('change', function () {
+            if ($(this).val() === 'nova') {
+                $('#blocoNovaCategoria').removeClass('d-none');
+            } else {
+                esconderBlocoNovaCategoria();
+            }
+        });
+
         $(document).on('click', '.btn-editar-transacao', function () {
             const $btn = $(this);
-            abrirModalEditar($btn.data('id'), $btn.data('descricao'), $btn.data('valor'), $btn.data('data'), $btn.data('categoria'));
+            abrirModalEditar($btn.data('id'), $btn.data('descricao'), $btn.data('valor'), $btn.data('data'), $btn.data('categoria'), $btn.data('chave'), $btn.data('qtd-outras'));
         });
 
         $(document).on('click', '.btn-excluir-transacao', function () {
@@ -321,6 +432,8 @@
             limparErros();
 
             const id = $('#transacaoId').val();
+            const categoriaVal = $('#transacaoCategoria').val();
+            const criandoNova = categoriaVal === 'nova';
 
             $('#btnSalvarTransacao').prop('disabled', true);
 
@@ -334,9 +447,15 @@
                     descricao: $('#transacaoDescricao').val(),
                     valor: $('#transacaoValor').val() ? parseFloat($('#transacaoValor').val()) : null,
                     data: $('#transacaoData').val(),
-                    idCategoria: $('#transacaoCategoria').val() ? parseInt($('#transacaoCategoria').val()) : null
+                    idCategoria: (!criandoNova && categoriaVal) ? parseInt(categoriaVal) : null,
+                    novaCategoriaNome: criandoNova ? $('#novaCategoriaNome').val() : null,
+                    novaCategoriaTipo: criandoNova ? ($('input[name="novaCategoriaTipo"]:checked').val() === 'despesa') : null,
+                    aplicarATodasDoComercio: $('#aplicarTodasComercio').is(':checked')
                 }),
-                success: function () {
+                success: function (response) {
+                    if (response && response.qtdAtualizada > 0) {
+                        alert('Categoria aplicada a mais ' + response.qtdAtualizada + ' transação(ões) do mesmo comércio.');
+                    }
                     window.location.reload();
                 },
                 error: function (xhr) {
