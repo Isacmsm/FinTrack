@@ -1,0 +1,158 @@
+@page
+@using System.Globalization
+@using Microsoft.AspNetCore.Http
+@using FinTrack.Data
+@using FinTrack.Models
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@functions {
+
+    public List<FaturaResumo> Faturas { get; set; } = [];
+
+    private int IdUserAtual => HttpContext.Session.GetInt32("IdUser")!.Value;
+
+    public async Task OnGetAsync()
+    {
+        var idUser = IdUserAtual;
+
+        // O total/vencimento/fechamento/pagamento vêm de GET /bills da Pluggy
+        // — a mesma fonte que o dashboard do meu.pluggy.ai usa —, não de soma
+        // de transações locais. As transações abaixo são só pra detalhar o
+        // que já foi importado (janela fixa de 90 dias); faturas mais antigas
+        // que essa janela têm total certo mas lista de compras vazia.
+        var faturasPluggy = await Db.PluggyFaturas
+            .Where(f => f.IdUser == idUser)
+            .ToListAsync();
+
+        var transacoesCartao = await Db.Transacoes
+            .Include(t => t.IdCategoriaNavigation)
+            .Where(t => t.IdUser == idUser && t.ContaTipo == "CREDIT")
+            .ToListAsync();
+
+        // Cálculo compartilhado com a página Cartões — as duas têm que
+        // mostrar exatamente os mesmos números.
+        Faturas = FaturaCalculadora.Calcular(faturasPluggy, transacoesCartao, DateTime.Today);
+    }
+}
+@{
+    ViewData["Title"] = "Faturas";
+    var culturaBr = new CultureInfo("pt-BR");
+}
+
+<h1 class="font-display fs-2 fw-bold text-dark mb-0">Faturas</h1>
+<p class="text-secondary mt-1">Valores vindos direto da Pluggy — os mesmos do Meu Pluggy</p>
+
+<div class="alert alert-secondary py-2 px-3 small mt-3 mb-0">
+    <strong>Sem confirmação de pagamento</strong> não quer dizer que a fatura está em aberto de verdade — a Pluggy nem sempre devolve o histórico de pagamento pra esse conector. Confira no Meu Pluggy/app do banco antes de tratar como pendência real.
+</div>
+
+<div class="d-grid gap-3 mt-3">
+    @foreach (var fatura in Faturas)
+    {
+        var (textoStatus, classeStatus) = fatura.StatusPagamento is { Length: > 0 } s ? FaturaCalculadora.BadgeStatusPagamento(s) : ("", "");
+
+        <details class="card shadow-sm" open="@(fatura.Sintetizada ? "open" : null)">
+            <summary class="card-header bg-white d-flex align-items-center justify-content-between flex-wrap gap-2" style="cursor: pointer;">
+                <span class="d-flex align-items-center gap-2 flex-wrap">
+                    <span class="fw-semibold">@fatura.ContaNome</span>
+                    <span class="text-secondary">·</span>
+                    @if (fatura.Sintetizada)
+                    {
+                        <span>Ciclo atual (ainda não fechou)</span>
+                        <span class="badge text-bg-primary">Em aberto</span>
+                        <span class="badge text-bg-light border text-secondary">estimado por data</span>
+                        @if (fatura.ValorAntecipado > 0)
+                        {
+                            <span class="badge text-bg-success">@fatura.ValorAntecipado.ToString("C", culturaBr) já adiantado</span>
+                        }
+                    }
+                    else
+                    {
+                        <span>Vencimento @fatura.DataVencimento!.Value.ToString("dd/MM/yyyy")</span>
+                        @if (fatura.ValorMinimo is decimal minimo)
+                        {
+                            <span class="text-secondary small">(mínimo @minimo.ToString("C", culturaBr))</span>
+                        }
+                        <span class="badge text-bg-light border">Fechada</span>
+                        <span class="badge @classeStatus">@textoStatus</span>
+                        @if (fatura.PagamentoVistoNoExtrato)
+                        {
+                            <span class="text-secondary small">(visto no extrato do cartão)</span>
+                        }
+                    }
+                </span>
+                <span class="fw-bold text-danger">@fatura.ValorTotal.ToString("C", culturaBr)</span>
+            </summary>
+            @if (fatura.Sintetizada && fatura.ValorAntecipado > 0)
+            {
+                <div class="px-3 py-2 small border-bottom bg-light-subtle">
+                    <span class="text-secondary">Compras: @fatura.ValorTotal.ToString("C", culturaBr)</span>
+                    <span class="text-success ms-2">− Já adiantado: @fatura.ValorAntecipado.ToString("C", culturaBr)</span>
+                    <span class="fw-semibold ms-2">= Saldo restante: @fatura.SaldoRestante.ToString("C", culturaBr)</span>
+                </div>
+                <table class="table table-sm align-middle mb-0 border-bottom">
+                    <tbody>
+                        @foreach (var pagamento in fatura.PagamentosAntecipados)
+                        {
+                            <tr>
+                                <td class="text-secondary" style="width: 110px;">@pagamento.Data.ToString("dd/MM/yyyy")</td>
+                                <td>Pagamento adiantado</td>
+                                <td class="text-end text-success fw-semibold" style="width: 140px;">+ @pagamento.Valor.ToString("C", culturaBr)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            <div class="table-responsive">
+                @if (fatura.Transacoes.Count == 0)
+                {
+                    <p class="text-secondary small text-center py-3 mb-0 px-3">
+                        Nenhuma transação desse período foi importada ainda (a sincronização só traz os últimos 90 dias) —
+                        o valor da fatura acima é o real da Pluggy, só a lista de compras que está incompleta.
+                    </p>
+                }
+                else
+                {
+                    <table class="table table-sm align-middle mb-0">
+                        <tbody>
+                            @foreach (var transacao in fatura.Transacoes)
+                            {
+                                var despesa = transacao.IdCategoriaNavigation.Tipo;
+                                <tr>
+                                    <td class="text-secondary" style="width: 110px;">@transacao.Data.ToString("dd/MM/yyyy")</td>
+                                    <td>
+                                        @(transacao.MerchantNome ?? transacao.Desc)
+                                        @if (transacao.PluggyParcelaTotal is int total && total > 1)
+                                        {
+                                            <span class="badge text-bg-light border ms-1">parcela @transacao.PluggyParcelaAtual/@total</span>
+                                        }
+                                    </td>
+                                    <td class="text-end fw-semibold @(despesa ? "text-danger" : "text-success")" style="width: 140px;">
+                                        @((despesa ? "- " : "+ "))@transacao.Valor.ToString("C", culturaBr)
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    @if (fatura.DivergeDoTotal)
+                    {
+                        <p class="text-secondary small px-3 py-2 mb-0 border-top">
+                            Transações importadas somam @fatura.SomaTransacoesImportadas.ToString("C", culturaBr),
+                            diferente do total da fatura (@fatura.ValorTotal.ToString("C", culturaBr)) —
+                            pode faltar alguma compra fora da janela de importação, ou a fatura inclui encargos que não aparecem como transação separada.
+                        </p>
+                    }
+                }
+            </div>
+        </details>
+    }
+    @if (Faturas.Count == 0)
+    {
+        <div class="card shadow-sm">
+            <div class="card-body text-secondary small text-center py-4">
+                Nenhuma fatura sincronizada ainda. Clique em Buscar/Atualizar em
+                <a asp-page="/App/Configuracoes/Pluggy" class="text-decoration-none">Meu Pluggy</a> pra importar.
+            </div>
+        </div>
+    }
+</div>

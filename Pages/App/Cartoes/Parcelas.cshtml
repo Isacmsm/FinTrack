@@ -1,0 +1,157 @@
+@page
+@using System.Globalization
+@using Microsoft.AspNetCore.Http
+@using FinTrack.Data
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@functions {
+
+    public class CompraParcelada
+    {
+        public string Descricao { get; set; } = "";
+        public string ContaNome { get; set; } = "";
+        public int ParcelaAtual { get; set; }
+        public int ParcelaTotal { get; set; }
+        public decimal ValorParcela { get; set; }
+        public decimal? ValorTotalCompra { get; set; }
+        public DateTime? DataCompra { get; set; }
+    }
+
+    public List<CompraParcelada> EmAndamento { get; set; } = [];
+    public List<CompraParcelada> Quitadas { get; set; } = [];
+
+    /// <summary>
+    /// true quando existem transações de cartão importadas mas nenhuma tem
+    /// installmentNumber/totalInstallments — ou seja, o conector não expõe
+    /// parcelamento por transação (confirmado nulo pro Meu Pluggy), não que
+    /// não haja compra parcelada. Muda a mensagem de vazio pra não parecer
+    /// que a detecção rodou e não achou nada.
+    /// </summary>
+    public bool ConectorSemDadosDeParcelamento { get; set; }
+
+    private int IdUserAtual => HttpContext.Session.GetInt32("IdUser")!.Value;
+
+    public async Task OnGetAsync()
+    {
+        var idUser = IdUserAtual;
+
+        var parcelas = await Db.Transacoes
+            .Where(t => t.IdUser == idUser && t.PluggyParcelaTotal != null && t.PluggyParcelaTotal > 1)
+            .Select(t => new
+            {
+                t.Desc,
+                t.MerchantNome,
+                t.ContaNome,
+                t.PluggyParcelaAtual,
+                t.PluggyParcelaTotal,
+                t.PluggyValorCompraTotal,
+                t.PluggyDataCompra,
+                t.Valor,
+                t.Data
+            })
+            .ToListAsync();
+
+        // Cada linha importada é UMA parcela; agrupa pela compra original
+        // (data da compra + valor total + total de parcelas + conta) porque a
+        // Pluggy não expõe um id de compra separado do id de cada parcela.
+        var compras = parcelas
+            .GroupBy(p => new { p.ContaNome, p.PluggyDataCompra, p.PluggyValorCompraTotal, p.PluggyParcelaTotal })
+            .Select(g =>
+            {
+                var maisRecente = g.OrderByDescending(p => p.PluggyParcelaAtual).First();
+                return new CompraParcelada
+                {
+                    Descricao = maisRecente.MerchantNome ?? maisRecente.Desc ?? "Compra parcelada",
+                    ContaNome = g.Key.ContaNome ?? "Cartão",
+                    ParcelaAtual = maisRecente.PluggyParcelaAtual ?? 0,
+                    ParcelaTotal = g.Key.PluggyParcelaTotal ?? 0,
+                    ValorParcela = maisRecente.Valor,
+                    ValorTotalCompra = g.Key.PluggyValorCompraTotal,
+                    DataCompra = g.Key.PluggyDataCompra
+                };
+            })
+            .ToList();
+
+        EmAndamento = compras
+            .Where(c => c.ParcelaAtual < c.ParcelaTotal)
+            .OrderBy(c => c.ParcelaTotal - c.ParcelaAtual)
+            .ToList();
+
+        Quitadas = compras
+            .Where(c => c.ParcelaAtual >= c.ParcelaTotal)
+            .OrderByDescending(c => c.DataCompra)
+            .ToList();
+
+        var totalTransacoesCartao = await Db.Transacoes.CountAsync(t => t.IdUser == idUser && t.ContaTipo == "CREDIT");
+        ConectorSemDadosDeParcelamento = totalTransacoesCartao > 0 && parcelas.Count == 0;
+    }
+}
+@{
+    ViewData["Title"] = "Parcelas";
+    var culturaBr = new CultureInfo("pt-BR");
+}
+
+<h1 class="font-display fs-2 fw-bold text-dark mb-0">Parcelas</h1>
+<p class="text-secondary mt-1">Compras parceladas no cartão de crédito</p>
+
+<div class="card shadow-sm mt-3">
+    <div class="card-header bg-white fw-semibold">Em andamento</div>
+    <ul class="list-group list-group-flush">
+        @foreach (var compra in EmAndamento)
+        {
+            <li class="list-group-item">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="fw-medium">@compra.Descricao</div>
+                        <div class="text-secondary small">
+                            @compra.ContaNome · Parcela @compra.ParcelaAtual de @compra.ParcelaTotal
+                            @if (compra.DataCompra is DateTime dataCompra)
+                            {
+                                @:· comprado em @dataCompra.ToString("dd/MM/yyyy")
+                            }
+                        </div>
+                    </div>
+                    <div class="text-end">
+                        <div class="fw-semibold">@compra.ValorParcela.ToString("C", culturaBr)/mês</div>
+                        @if (compra.ValorTotalCompra is decimal total)
+                        {
+                            <div class="text-secondary small">Total: @total.ToString("C", culturaBr)</div>
+                        }
+                    </div>
+                </div>
+                <div class="progress mt-2" style="height: 4px;">
+                    <div class="progress-bar" role="progressbar" style="width: @(compra.ParcelaTotal > 0 ? compra.ParcelaAtual * 100 / compra.ParcelaTotal : 0)%;"></div>
+                </div>
+            </li>
+        }
+        @if (EmAndamento.Count == 0 && ConectorSemDadosDeParcelamento)
+        {
+            <li class="list-group-item text-secondary small">
+                Seu conector de cartão não devolve dado de parcelamento por transação — não é que não haja compra parcelada, é que a Pluggy não expõe isso pra essa conexão.
+            </li>
+        }
+        else if (EmAndamento.Count == 0)
+        {
+            <li class="list-group-item text-secondary small">Nenhuma compra parcelada em andamento</li>
+        }
+    </ul>
+</div>
+
+@if (Quitadas.Count > 0)
+{
+    <div class="card shadow-sm mt-4">
+        <div class="card-header bg-white fw-semibold">Quitadas recentemente</div>
+        <ul class="list-group list-group-flush">
+            @foreach (var compra in Quitadas)
+            {
+                <li class="list-group-item d-flex justify-content-between align-items-center text-secondary">
+                    <div>
+                        <span class="fw-medium">@compra.Descricao</span>
+                        <span class="small"> · @compra.ContaNome · @compra.ParcelaTotal parcela(s)</span>
+                    </div>
+                    <span class="small">@((compra.ValorTotalCompra ?? compra.ValorParcela * compra.ParcelaTotal).ToString("C", culturaBr))</span>
+                </li>
+            }
+        </ul>
+    </div>
+}

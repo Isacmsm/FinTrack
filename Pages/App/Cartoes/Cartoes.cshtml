@@ -1,0 +1,119 @@
+@page
+@using System.Globalization
+@using Microsoft.AspNetCore.Http
+@using FinTrack.Data
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@functions {
+
+    public class ResumoCartao
+    {
+        public string Nome { get; set; } = "";
+        public FaturaResumo? CicloAberto { get; set; }
+        public FaturaResumo? UltimaFaturaFechada { get; set; }
+    }
+
+    public List<ResumoCartao> Cartoes { get; set; } = [];
+
+    private int IdUserAtual => HttpContext.Session.GetInt32("IdUser")!.Value;
+
+    public async Task OnGetAsync()
+    {
+        var idUser = IdUserAtual;
+
+        var faturasPluggy = await Db.PluggyFaturas
+            .Where(f => f.IdUser == idUser)
+            .ToListAsync();
+
+        var transacoesCartao = await Db.Transacoes
+            .Include(t => t.IdCategoriaNavigation)
+            .Where(t => t.IdUser == idUser && t.ContaTipo == "CREDIT")
+            .ToListAsync();
+
+        // Mesmo cálculo da página Faturas — pra não voltar a mostrar números
+        // diferentes numa página e noutra.
+        var faturas = FaturaCalculadora.Calcular(faturasPluggy, transacoesCartao, DateTime.Today);
+
+        Cartoes = faturas
+            .GroupBy(f => f.ContaPluggyId)
+            .Select(g => new ResumoCartao
+            {
+                Nome = g.First().ContaNome,
+                CicloAberto = g.FirstOrDefault(f => f.Sintetizada),
+                UltimaFaturaFechada = g.Where(f => !f.Sintetizada).OrderByDescending(f => f.DataVencimento).FirstOrDefault()
+            })
+            .OrderByDescending(c => c.CicloAberto?.ValorTotal ?? c.UltimaFaturaFechada?.ValorTotal ?? 0)
+            .ToList();
+    }
+}
+@{
+    ViewData["Title"] = "Meus cartões";
+    var culturaBr = new CultureInfo("pt-BR");
+}
+
+<h1 class="font-display fs-2 fw-bold text-dark mb-0">Meus cartões</h1>
+<p class="text-secondary mt-1">Cartões de crédito identificados nas suas conexões Pluggy</p>
+
+<div class="row g-4 mt-1">
+    @foreach (var cartao in Cartoes)
+    {
+        <div class="col-md-6 col-lg-5">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <p class="text-secondary small mb-2">@cartao.Nome</p>
+
+                    @if (cartao.CicloAberto is FaturaResumo aberto)
+                    {
+                        <p class="text-secondary small mb-0">Ciclo atual (em aberto)</p>
+                        <p class="fs-4 fw-bold text-danger mb-0">@aberto.ValorTotal.ToString("C", culturaBr)</p>
+                        @if (aberto.ValorAntecipado > 0)
+                        {
+                            <p class="text-success small mb-0">− @aberto.ValorAntecipado.ToString("C", culturaBr) já adiantado</p>
+                            <p class="text-secondary small mb-2">Saldo restante: @aberto.SaldoRestante.ToString("C", culturaBr)</p>
+                        }
+                        else
+                        {
+                            <p class="text-secondary small mb-2">&nbsp;</p>
+                        }
+                    }
+
+                    @if (cartao.UltimaFaturaFechada is FaturaResumo fechada)
+                    {
+                        var (textoStatus, classeStatus) = FaturaCalculadora.BadgeStatusPagamento(fechada.StatusPagamento);
+                        <hr class="my-2" />
+                        <p class="text-secondary small mb-0">
+                            Última fatura fechada · vence @fechada.DataVencimento!.Value.ToString("dd/MM/yyyy")
+                        </p>
+                        <p class="fw-semibold mb-1">@fechada.ValorTotal.ToString("C", culturaBr)</p>
+                        <span class="badge @classeStatus">@textoStatus</span>
+                        @if (fechada.PagamentoVistoNoExtrato)
+                        {
+                            <span class="text-secondary small">(visto no extrato)</span>
+                        }
+                    }
+                    else if (cartao.CicloAberto is null)
+                    {
+                        <p class="fs-5 fw-semibold text-secondary mb-0">Sem fatura sincronizada</p>
+                        <p class="text-secondary small mb-0">Clique em Buscar/Atualizar no Meu Pluggy pra trazer os dados da fatura</p>
+                    }
+                </div>
+                <div class="card-footer bg-white border-top-0 pt-0">
+                    <a asp-page="/App/Cartoes/Faturas" class="small text-decoration-none">Ver faturas</a>
+                    <span class="text-secondary mx-1">·</span>
+                    <a asp-page="/App/Cartoes/Parcelas" class="small text-decoration-none">Ver parcelas</a>
+                </div>
+            </div>
+        </div>
+    }
+    @if (Cartoes.Count == 0)
+    {
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body text-secondary small text-center py-4">
+                    Nenhum cartão de crédito identificado ainda. Sincronize uma conexão em
+                    <a asp-page="/App/Configuracoes/Pluggy" class="text-decoration-none">Meu Pluggy</a> pra importar.
+                </div>
+            </div>
+        </div>
+    }
+</div>
