@@ -1,0 +1,331 @@
+@page
+@using System.Globalization
+@using Microsoft.AspNetCore.Http
+@using FinTrack.Data
+@using FinTrack.Models
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@functions {
+
+    public class LinhaOrcamento
+    {
+        public int IdCategoria { get; set; }
+        public string Nome { get; set; } = "";
+        public bool Despesa { get; set; }
+        public decimal Meta { get; set; }
+        public decimal Realizado { get; set; }
+        public decimal? PercentualMeta => Meta > 0 ? Math.Round(Realizado / Meta * 100, 0) : null;
+    }
+
+    public class ItemOrcamento
+    {
+        public int IdCategoria { get; set; }
+        public decimal? Valor { get; set; }
+    }
+
+    public class OrcamentoRequest
+    {
+        public List<ItemOrcamento> Itens { get; set; } = [];
+    }
+
+    public List<LinhaOrcamento> Receitas { get; set; } = [];
+    public List<LinhaOrcamento> Despesas { get; set; } = [];
+    public string MesSelecionado { get; set; } = "";
+    public decimal TotalReceitaMeta { get; set; }
+    public decimal TotalDespesaMeta { get; set; }
+    public decimal TotalReceitaRealizado { get; set; }
+    public decimal TotalDespesaRealizado { get; set; }
+
+    private int IdUserAtual => HttpContext.Session.GetInt32("IdUser")!.Value;
+
+    private static (DateTime inicio, DateTime fim) LimitesDoMes(string mes)
+    {
+        var referencia = DateTime.TryParseExact(mes, "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)
+            ? d
+            : DateTime.Today;
+
+        var inicio = new DateTime(referencia.Year, referencia.Month, 1);
+        return (inicio, inicio.AddMonths(1));
+    }
+
+    public async Task OnGetAsync(string? mes)
+    {
+        var idUser = IdUserAtual;
+        MesSelecionado = string.IsNullOrWhiteSpace(mes) ? DateTime.Today.ToString("yyyy-MM") : mes;
+        var (inicio, fim) = LimitesDoMes(MesSelecionado);
+
+        // Movimentação interna (aplicação/resgate de investimento, pagamento
+        // de fatura) fica de fora — é dinheiro mudando de lugar, não um gasto
+        // ou receita de verdade, mesma regra do resto do app.
+        var categorias = await Db.Categorias
+            .Where(c => (c.IdUser == null || c.IdUser == idUser) && !c.EhMovimentacaoInterna)
+            .ToListAsync();
+
+        var metas = await Db.Orcamentos
+            .Where(o => o.IdUser == idUser)
+            .ToDictionaryAsync(o => o.IdCategoria, o => o.Valor);
+
+        var realizadoPorCategoria = await Db.Transacoes
+            .Where(t => t.IdUser == idUser && t.Data >= inicio && t.Data < fim && !t.IdCategoriaNavigation.EhMovimentacaoInterna)
+            .GroupBy(t => t.IdCategoria)
+            .Select(g => new { IdCategoria = g.Key, Total = g.Sum(t => t.Valor) })
+            .ToDictionaryAsync(g => g.IdCategoria, g => g.Total);
+
+        // Toda categoria orçável aparece, tenha meta ou realizado ou nenhum
+        // dos dois — senão uma categoria sem meta ainda some da tela.
+        var linhas = categorias
+            .Select(c => new LinhaOrcamento
+            {
+                IdCategoria = c.Id,
+                Nome = c.Nome,
+                Despesa = c.Tipo,
+                Meta = metas.GetValueOrDefault(c.Id),
+                Realizado = realizadoPorCategoria.GetValueOrDefault(c.Id)
+            })
+            .OrderBy(l => l.Nome)
+            .ToList();
+
+        Receitas = linhas.Where(l => !l.Despesa).ToList();
+        Despesas = linhas.Where(l => l.Despesa).ToList();
+
+        TotalReceitaMeta = Receitas.Sum(l => l.Meta);
+        TotalDespesaMeta = Despesas.Sum(l => l.Meta);
+        TotalReceitaRealizado = Receitas.Sum(l => l.Realizado);
+        TotalDespesaRealizado = Despesas.Sum(l => l.Realizado);
+    }
+
+    public Task<IActionResult> OnPostSalvarAsync([FromBody] OrcamentoRequest request)
+    {
+        return Util.ExecutarHandlerAsync(async () =>
+        {
+            var idUser = IdUserAtual;
+
+            var categoriasValidas = await Db.Categorias
+                .Where(c => c.IdUser == null || c.IdUser == idUser)
+                .Select(c => c.Id)
+                .ToListAsync();
+
+            var existentes = await Db.Orcamentos
+                .Where(o => o.IdUser == idUser)
+                .ToDictionaryAsync(o => o.IdCategoria);
+
+            foreach (var item in request.Itens)
+            {
+                if (!categoriasValidas.Contains(item.IdCategoria)) continue;
+
+                var temValor = item.Valor is > 0;
+
+                if (existentes.TryGetValue(item.IdCategoria, out var orcamento))
+                {
+                    if (temValor) orcamento.Valor = item.Valor!.Value;
+                    else Db.Orcamentos.Remove(orcamento);
+                }
+                else if (temValor)
+                {
+                    Db.Orcamentos.Add(new Orcamento { IdUser = idUser, IdCategoria = item.IdCategoria, Valor = item.Valor!.Value });
+                }
+            }
+
+            await Db.SaveChangesAsync();
+            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+        });
+    }
+}
+@{
+    ViewData["Title"] = "Orçamento";
+    var culturaBr = new CultureInfo("pt-BR");
+
+    string ClasseBarra(LinhaOrcamento l) => l.PercentualMeta switch
+    {
+        null => "bg-secondary-subtle",
+        > 100 when l.Despesa => "bg-danger",
+        _ when l.Despesa => "bg-success",
+        < 100 => "bg-warning",
+        _ => "bg-success"
+    };
+}
+
+<div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-3">
+    <div>
+        <h1 class="font-display fs-2 fw-bold text-dark mb-0">Orçamento</h1>
+        <p class="text-secondary mt-1 mb-0">Meta por categoria x o que já foi realizado no mês</p>
+    </div>
+    <input type="month" class="form-control" id="filtroMes" value="@MesSelecionado" onchange="mudarMes(this.value)" />
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-sm-6 col-lg-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Receita orçada</p>
+                <p class="fs-5 fw-bold text-success mb-0">@TotalReceitaMeta.ToString("C", culturaBr)</p>
+                <p class="text-secondary small mb-0">Realizado: @TotalReceitaRealizado.ToString("C", culturaBr)</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Despesa orçada</p>
+                <p class="fs-5 fw-bold text-danger mb-0">@TotalDespesaMeta.ToString("C", culturaBr)</p>
+                <p class="text-secondary small mb-0">Realizado: @TotalDespesaRealizado.ToString("C", culturaBr)</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Saldo orçado</p>
+                @{ var saldoOrcado = TotalReceitaMeta - TotalDespesaMeta; }
+                <p class="fs-5 fw-bold @(saldoOrcado >= 0 ? "text-success" : "text-danger") mb-0">@saldoOrcado.ToString("C", culturaBr)</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Saldo realizado</p>
+                @{ var saldoRealizado = TotalReceitaRealizado - TotalDespesaRealizado; }
+                <p class="fs-5 fw-bold @(saldoRealizado >= 0 ? "text-success" : "text-danger") mb-0">@saldoRealizado.ToString("C", culturaBr)</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="alert alert-danger py-2 px-3 small d-none" id="erroGeral"></div>
+
+@Html.AntiForgeryToken()
+
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-semibold">Receitas</div>
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Categoria</th>
+                            <th style="width: 140px;">Meta</th>
+                            <th class="text-end">Realizado</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var linha in Receitas)
+                        {
+                            <tr>
+                                <td>
+                                    @linha.Nome
+                                    <div class="progress mt-1" style="height: 4px;">
+                                        <div class="progress-bar @ClasseBarra(linha)" style="width: @(Math.Min(linha.PercentualMeta ?? 0, 100))%;"></div>
+                                    </div>
+                                </td>
+                                <td>
+                                    <input type="number" step="0.01" min="0" class="form-control form-control-sm input-meta" data-id-categoria="@linha.IdCategoria" value="@(linha.Meta > 0 ? linha.Meta.ToString(CultureInfo.InvariantCulture) : "")" placeholder="0,00" />
+                                </td>
+                                <td class="text-end text-success fw-semibold">
+                                    @linha.Realizado.ToString("C", culturaBr)
+                                    @if (linha.PercentualMeta is decimal p)
+                                    {
+                                        <div class="text-secondary small fw-normal">@p.ToString("0", culturaBr)% da meta</div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        @if (Receitas.Count == 0)
+                        {
+                            <tr><td colspan="3" class="text-center text-secondary py-3">Nenhuma categoria de receita</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-semibold">Despesas</div>
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Categoria</th>
+                            <th style="width: 140px;">Meta</th>
+                            <th class="text-end">Realizado</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var linha in Despesas)
+                        {
+                            <tr>
+                                <td>
+                                    @linha.Nome
+                                    <div class="progress mt-1" style="height: 4px;">
+                                        <div class="progress-bar @ClasseBarra(linha)" style="width: @(Math.Min(linha.PercentualMeta ?? 0, 100))%;"></div>
+                                    </div>
+                                </td>
+                                <td>
+                                    <input type="number" step="0.01" min="0" class="form-control form-control-sm input-meta" data-id-categoria="@linha.IdCategoria" value="@(linha.Meta > 0 ? linha.Meta.ToString(CultureInfo.InvariantCulture) : "")" placeholder="0,00" />
+                                </td>
+                                <td class="text-end text-danger fw-semibold">
+                                    @linha.Realizado.ToString("C", culturaBr)
+                                    @if (linha.PercentualMeta is decimal p)
+                                    {
+                                        <div class="text-secondary small fw-normal">@p.ToString("0", culturaBr)% da meta</div>
+                                    }
+                                    else if (TotalReceitaRealizado > 0 && linha.Realizado > 0)
+                                    {
+                                        <div class="text-secondary small fw-normal">@Math.Round(linha.Realizado / TotalReceitaRealizado * 100, 0).ToString("0", culturaBr)% da receita</div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        @if (Despesas.Count == 0)
+                        {
+                            <tr><td colspan="3" class="text-center text-secondary py-3">Nenhuma categoria de despesa</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="d-flex justify-content-end mt-3">
+    <button type="button" class="btn btn-primary" id="btnSalvarOrcamento" onclick="salvarOrcamento()">Salvar metas</button>
+</div>
+
+@section Scripts {
+    <script>
+        function mudarMes(mes) {
+            window.location = '/App/ControleFinanceiro/Orcamento?mes=' + mes;
+        }
+
+        function salvarOrcamento() {
+            limparErros();
+            $('#btnSalvarOrcamento').prop('disabled', true);
+
+            const itens = $('.input-meta').map(function () {
+                const valor = $(this).val();
+                return {
+                    idCategoria: parseInt($(this).data('id-categoria')),
+                    valor: valor ? parseFloat(valor) : null
+                };
+            }).get();
+
+            $.ajax({
+                url: '/App/ControleFinanceiro/Orcamento?handler=Salvar',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': $('input[name="__RequestVerificationToken"]').first().val() },
+                data: JSON.stringify({ itens: itens }),
+                success: function () {
+                    window.location.reload();
+                },
+                error: function (xhr) {
+                    $('#btnSalvarOrcamento').prop('disabled', false);
+                    mostrarErros(xhr);
+                }
+            });
+        }
+    </script>
+}
