@@ -27,6 +27,11 @@ public static partial class ComercioHelper
     [GeneratedRegex(@"\s*-\s*(NuPay|Débito|Crédito)\s*$", RegexOptions.IgnoreCase)]
     private static partial Regex SufixoCanalRegex();
 
+    // "Pag*Steam 2/3", "Ncopay *Atn - Mais Bel 3/3" — número da parcela no
+    // fim da descrição, senão cada parcela vira um "comércio" diferente.
+    [GeneratedRegex(@"\s+\d{1,2}/\d{1,2}$")]
+    private static partial Regex SufixoParcelaRegex();
+
     public static string ChaveComercio(string? merchantNome, string? desc)
     {
         if (!string.IsNullOrWhiteSpace(merchantNome))
@@ -40,6 +45,7 @@ public static partial class ComercioHelper
 
         texto = PrefixoEstornoRegex().Replace(texto, "");
         texto = SufixoCanalRegex().Replace(texto, "");
+        texto = SufixoParcelaRegex().Replace(texto, "");
         texto = PrefixoGatewayRegex().Replace(texto, "");
 
         return texto.Trim().ToUpperInvariant();
