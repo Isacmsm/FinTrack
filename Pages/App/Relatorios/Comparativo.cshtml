@@ -1,0 +1,236 @@
+@page
+@using System.Globalization
+@using System.Text.Json
+@using Microsoft.AspNetCore.Http
+@using FinTrack.Data
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@functions {
+
+    // Mesma cor de despesa do dashboard pro mês atual; um tom mais claro (mesma
+    // matiz, ordinal — não é uma nova identidade categórica) pro mês anterior.
+    // Validado com scripts/validate_palette.js --ordinal (skill dataviz).
+    private const string CorMesAtual = "#e34948";
+    private const string CorMesAnterior = "#eb9290";
+
+    public class LinhaComparativo
+    {
+        public string Nome { get; set; } = "";
+        public decimal Atual { get; set; }
+        public decimal Anterior { get; set; }
+        public decimal? DeltaPercentual { get; set; }
+    }
+
+    public decimal ReceitasMesAtual { get; set; }
+    public decimal ReceitasMesAnterior { get; set; }
+    public decimal DespesasMesAtual { get; set; }
+    public decimal DespesasMesAnterior { get; set; }
+
+    public List<LinhaComparativo> ComparativoCategorias { get; set; } = [];
+    public string ComparativoJson { get; set; } = "[]";
+    public string NomeMesAtual { get; set; } = "";
+    public string NomeMesAnterior { get; set; } = "";
+
+    private int IdUserAtual => HttpContext.Session.GetInt32("IdUser")!.Value;
+
+    public async Task OnGetAsync()
+    {
+        var idUser = IdUserAtual;
+        var culturaBr = new CultureInfo("pt-BR");
+        var hoje = DateTime.Today;
+
+        var inicioAtual = new DateTime(hoje.Year, hoje.Month, 1);
+        var fimAtual = inicioAtual.AddMonths(1);
+        var inicioAnterior = inicioAtual.AddMonths(-1);
+        var fimAnterior = inicioAtual;
+
+        NomeMesAtual = culturaBr.DateTimeFormat.GetMonthName(inicioAtual.Month);
+        NomeMesAnterior = culturaBr.DateTimeFormat.GetMonthName(inicioAnterior.Month);
+
+        async Task<decimal> SomarAsync(DateTime inicio, DateTime fim, bool tipoDespesa) =>
+            await Db.Transacoes
+                .Where(t => t.IdUser == idUser && t.Data >= inicio && t.Data < fim
+                            && t.IdCategoriaNavigation.Tipo == tipoDespesa && !t.IdCategoriaNavigation.EhMovimentacaoInterna)
+                .SumAsync(t => (decimal?)t.Valor) ?? 0;
+
+        ReceitasMesAtual = await SomarAsync(inicioAtual, fimAtual, tipoDespesa: false);
+        ReceitasMesAnterior = await SomarAsync(inicioAnterior, fimAnterior, tipoDespesa: false);
+        DespesasMesAtual = await SomarAsync(inicioAtual, fimAtual, tipoDespesa: true);
+        DespesasMesAnterior = await SomarAsync(inicioAnterior, fimAnterior, tipoDespesa: true);
+
+        async Task<Dictionary<int, (string Nome, decimal Total)>> DespesasPorCategoriaAsync(DateTime inicio, DateTime fim) =>
+            (await Db.Transacoes
+                .Where(t => t.IdUser == idUser && t.Data >= inicio && t.Data < fim
+                            && t.IdCategoriaNavigation.Tipo && !t.IdCategoriaNavigation.EhMovimentacaoInterna)
+                .GroupBy(t => new { t.IdCategoria, t.IdCategoriaNavigation.Nome })
+                .Select(g => new { g.Key.IdCategoria, g.Key.Nome, Total = g.Sum(t => t.Valor) })
+                .ToListAsync())
+            .ToDictionary(g => g.IdCategoria, g => (g.Nome, g.Total));
+
+        var porCategoriaAtual = await DespesasPorCategoriaAsync(inicioAtual, fimAtual);
+        var porCategoriaAnterior = await DespesasPorCategoriaAsync(inicioAnterior, fimAnterior);
+
+        var idsCategorias = porCategoriaAtual.Keys.Union(porCategoriaAnterior.Keys);
+
+        ComparativoCategorias = idsCategorias
+            .Select(id =>
+            {
+                var atual = porCategoriaAtual.TryGetValue(id, out var a) ? a.Total : 0;
+                var anterior = porCategoriaAnterior.TryGetValue(id, out var an) ? an.Total : 0;
+                var nome = porCategoriaAtual.TryGetValue(id, out var a2) ? a2.Nome : porCategoriaAnterior[id].Nome;
+
+                return new LinhaComparativo
+                {
+                    Nome = nome,
+                    Atual = atual,
+                    Anterior = anterior,
+                    DeltaPercentual = anterior > 0 ? Math.Round((atual - anterior) / anterior * 100, 1) : null
+                };
+            })
+            .OrderByDescending(l => l.Atual)
+            .ToList();
+
+        ComparativoJson = JsonSerializer.Serialize(ComparativoCategorias
+            .Take(8)
+            .Select(l => new { nome = l.Nome, atual = l.Atual, anterior = l.Anterior }));
+    }
+}
+@{
+    ViewData["Title"] = "Comparativo";
+    var culturaBr = new CultureInfo("pt-BR");
+}
+
+<h1 class="font-display fs-2 fw-bold text-dark mb-0">Comparativo mensal</h1>
+<p class="text-secondary mt-1">@NomeMesAnterior x @NomeMesAtual, categoria por categoria</p>
+
+<div class="row g-3 my-1 mb-4">
+    <div class="col-sm-6 col-lg-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Receitas em @NomeMesAtual</p>
+                <p class="fs-4 fw-bold text-success mb-0">@ReceitasMesAtual.ToString("C", culturaBr)</p>
+                <p class="text-secondary small mb-0">@NomeMesAnterior: @ReceitasMesAnterior.ToString("C", culturaBr)</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Despesas em @NomeMesAtual</p>
+                <p class="fs-4 fw-bold text-danger mb-0">@DespesasMesAtual.ToString("C", culturaBr)</p>
+                <p class="text-secondary small mb-0">@NomeMesAnterior: @DespesasMesAnterior.ToString("C", culturaBr)</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Saldo em @NomeMesAtual</p>
+                @{ var saldoAtual = ReceitasMesAtual - DespesasMesAtual; }
+                <p class="fs-4 fw-bold @(saldoAtual >= 0 ? "text-success" : "text-danger") mb-0">@saldoAtual.ToString("C", culturaBr)</p>
+                @{ var saldoAnterior = ReceitasMesAnterior - DespesasMesAnterior; }
+                <p class="text-secondary small mb-0">@NomeMesAnterior: @saldoAnterior.ToString("C", culturaBr)</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <p class="text-secondary small mb-1">Variação das despesas</p>
+                @{
+                    var variacaoDespesas = DespesasMesAnterior > 0
+                        ? Math.Round((DespesasMesAtual - DespesasMesAnterior) / DespesasMesAnterior * 100, 1)
+                        : (decimal?)null;
+                }
+                @if (variacaoDespesas is decimal v)
+                {
+                    <p class="fs-4 fw-bold @(v > 0 ? "text-danger" : "text-success") mb-0">@(v > 0 ? "+" : "")@v.ToString("0.#", culturaBr)%</p>
+                }
+                else
+                {
+                    <p class="fs-4 fw-bold text-secondary mb-0">—</p>
+                }
+                <p class="text-secondary small mb-0">frente a @NomeMesAnterior</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-white fw-semibold">Despesas por categoria — @NomeMesAnterior x @NomeMesAtual</div>
+    <div class="card-body">
+        <div id="graficoComparativo"></div>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-header bg-white fw-semibold">Detalhamento por categoria</div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Categoria</th>
+                    <th class="text-end">@NomeMesAnterior</th>
+                    <th class="text-end">@NomeMesAtual</th>
+                    <th class="text-end">Variação</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var linha in ComparativoCategorias)
+                {
+                    <tr>
+                        <td>@linha.Nome</td>
+                        <td class="text-end">@linha.Anterior.ToString("C", culturaBr)</td>
+                        <td class="text-end fw-semibold">@linha.Atual.ToString("C", culturaBr)</td>
+                        <td class="text-end @(linha.DeltaPercentual is > 0 ? "text-danger" : linha.DeltaPercentual is < 0 ? "text-success" : "text-secondary")">
+                            @if (linha.DeltaPercentual is decimal d)
+                            {
+                                @((d > 0 ? "+" : "") + d.ToString("0.#", culturaBr) + "%")
+                            }
+                            else
+                            {
+                                <span>novo</span>
+                            }
+                        </td>
+                    </tr>
+                }
+                @if (ComparativoCategorias.Count == 0)
+                {
+                    <tr>
+                        <td colspan="4" class="text-center text-secondary py-4">Sem despesas nos dois meses</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const dadosComparativo = @Html.Raw(ComparativoJson);
+
+        function formatarMoeda(valor) {
+            return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        }
+
+        if (dadosComparativo.length > 0) {
+            new ApexCharts(document.querySelector('#graficoComparativo'), {
+                chart: { type: 'bar', height: Math.max(280, dadosComparativo.length * 55), toolbar: { show: false }, fontFamily: 'Plus Jakarta Sans, sans-serif' },
+                plotOptions: { bar: { horizontal: true, barHeight: '70%' } },
+                series: [
+                    { name: '@NomeMesAnterior', data: dadosComparativo.map(d => d.anterior) },
+                    { name: '@NomeMesAtual', data: dadosComparativo.map(d => d.atual) }
+                ],
+                colors: ['@CorMesAnterior', '@CorMesAtual'],
+                dataLabels: { enabled: false },
+                xaxis: { categories: dadosComparativo.map(d => d.nome), labels: { formatter: function (val) { return formatarMoeda(val); } } },
+                legend: { position: 'top' },
+                grid: { xaxis: { lines: { show: false } } },
+                tooltip: { y: { formatter: function (val) { return formatarMoeda(val); } } }
+            }).render();
+        } else {
+            document.querySelector('#graficoComparativo').innerHTML =
+                '<p class="text-secondary small text-center py-5 mb-0">Sem despesas nos dois meses</p>';
+        }
+    </script>
+}

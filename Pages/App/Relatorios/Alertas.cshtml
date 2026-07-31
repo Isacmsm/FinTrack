@@ -1,0 +1,189 @@
+@page
+@using System.Globalization
+@using Microsoft.AspNetCore.Http
+@using FinTrack.Data
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@functions {
+
+    private const int QuantidadeMinimaComercioRepetido = 3;
+    private const decimal LimiarAcimaDaMedia = 1.3m; // 30% acima da média já vira alerta
+    private const int MesesDeHistoricoParaMedia = 3;
+
+    public class AlertaComercio
+    {
+        public string Nome { get; set; } = "";
+        public int Quantidade { get; set; }
+        public decimal Total { get; set; }
+    }
+
+    public class AlertaCategoria
+    {
+        public string Nome { get; set; } = "";
+        public decimal Atual { get; set; }
+        public decimal Media { get; set; }
+        public decimal PercentualDaMedia { get; set; }
+    }
+
+    public List<AlertaComercio> ComerciosRepetidos { get; set; } = [];
+    public List<AlertaCategoria> CategoriasAcimaDaMedia { get; set; } = [];
+    public bool HistoricoSuficiente { get; set; }
+    public int MesesComHistorico { get; set; }
+    public string NomeMesAtual { get; set; } = "";
+
+    private int IdUserAtual => HttpContext.Session.GetInt32("IdUser")!.Value;
+
+    public async Task OnGetAsync()
+    {
+        var idUser = IdUserAtual;
+        var culturaBr = new CultureInfo("pt-BR");
+        var hoje = DateTime.Today;
+
+        var inicioAtual = new DateTime(hoje.Year, hoje.Month, 1);
+        var fimAtual = inicioAtual.AddMonths(1);
+        var inicioBase = inicioAtual.AddMonths(-MesesDeHistoricoParaMedia);
+
+        NomeMesAtual = culturaBr.DateTimeFormat.GetMonthName(inicioAtual.Month);
+
+        // --- Comércio repetido no mês ---
+        // Agrupa em memória (não no SQL) porque a chave é um coalesce
+        // MerchantNome ?? Desc, e o volume mensal de um usuário é pequeno o
+        // suficiente pra isso não pesar. MerchantNome vem da Pluggy
+        // (transaction.merchant) e é mais confiável que Desc pra desduplicar
+        // "IFOOD *IFOOD 4471" vs "IFOOD *IFOOD 9902" — mas transações
+        // importadas antes desse campo existir, ou de origem sem merchant
+        // reconhecido, ainda caem no fallback de descrição bruta.
+        var despesasMes = await Db.Transacoes
+            .Where(t => t.IdUser == idUser && t.Data >= inicioAtual && t.Data < fimAtual
+                        && t.IdCategoriaNavigation.Tipo && !t.IdCategoriaNavigation.EhMovimentacaoInterna)
+            .Select(t => new { t.MerchantNome, t.Desc, t.Valor })
+            .ToListAsync();
+
+        ComerciosRepetidos = despesasMes
+            .GroupBy(t => (t.MerchantNome ?? t.Desc ?? "").Trim(), StringComparer.OrdinalIgnoreCase)
+            .Where(g => !string.IsNullOrWhiteSpace(g.Key) && g.Count() >= QuantidadeMinimaComercioRepetido)
+            .Select(g => new AlertaComercio { Nome = g.Key, Quantidade = g.Count(), Total = g.Sum(t => t.Valor) })
+            .OrderByDescending(a => a.Total)
+            .ToList();
+
+        // --- Categoria acima da média ---
+        // A média divide pelos meses que TÊM transação lançada, não por
+        // MesesDeHistoricoParaMedia fixo — evita subestimar a média nos
+        // primeiros meses depois de conectar o Pluggy (janela de 90 dias),
+        // quando o mês mais antigo do histórico costuma vir incompleto.
+        MesesComHistorico = await Db.Transacoes
+            .Where(t => t.IdUser == idUser && t.Data >= inicioBase && t.Data < inicioAtual)
+            .Select(t => new { t.Data.Year, t.Data.Month })
+            .Distinct()
+            .CountAsync();
+
+        HistoricoSuficiente = MesesComHistorico >= 1;
+
+        if (HistoricoSuficiente)
+        {
+            var totalBasePorCategoria = await Db.Transacoes
+                .Where(t => t.IdUser == idUser && t.Data >= inicioBase && t.Data < inicioAtual
+                            && t.IdCategoriaNavigation.Tipo && !t.IdCategoriaNavigation.EhMovimentacaoInterna)
+                .GroupBy(t => new { t.IdCategoria, t.IdCategoriaNavigation.Nome })
+                .Select(g => new { g.Key.IdCategoria, g.Key.Nome, Total = g.Sum(t => t.Valor) })
+                .ToDictionaryAsync(g => g.IdCategoria);
+
+            var totalAtualPorCategoria = await Db.Transacoes
+                .Where(t => t.IdUser == idUser && t.Data >= inicioAtual && t.Data < fimAtual
+                            && t.IdCategoriaNavigation.Tipo && !t.IdCategoriaNavigation.EhMovimentacaoInterna)
+                .GroupBy(t => new { t.IdCategoria, t.IdCategoriaNavigation.Nome })
+                .Select(g => new { g.Key.IdCategoria, g.Key.Nome, Total = g.Sum(t => t.Valor) })
+                .ToListAsync();
+
+            CategoriasAcimaDaMedia = totalAtualPorCategoria
+                .Where(atual => totalBasePorCategoria.ContainsKey(atual.IdCategoria))
+                .Select(atual =>
+                {
+                    var media = totalBasePorCategoria[atual.IdCategoria].Total / MesesComHistorico;
+                    return new AlertaCategoria
+                    {
+                        Nome = atual.Nome,
+                        Atual = atual.Total,
+                        Media = media,
+                        PercentualDaMedia = media > 0 ? Math.Round(atual.Total / media * 100, 0) : 0
+                    };
+                })
+                .Where(a => a.Media > 0 && a.Atual > a.Media * LimiarAcimaDaMedia)
+                .OrderByDescending(a => a.PercentualDaMedia)
+                .ToList();
+        }
+    }
+}
+@{
+    ViewData["Title"] = "Alertas";
+    var culturaBr = new CultureInfo("pt-BR");
+}
+
+<h1 class="font-display fs-2 fw-bold text-dark mb-0">Alertas</h1>
+<p class="text-secondary mt-1">Coisas fora do padrão em @NomeMesAtual</p>
+
+<div class="row g-4 mt-1">
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-semibold">
+                Comércio repetido este mês
+                <span class="text-secondary fw-normal small">(@QuantidadeMinimaComercioRepetido+ compras)</span>
+            </div>
+            <ul class="list-group list-group-flush">
+                @foreach (var alerta in ComerciosRepetidos)
+                {
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="fw-medium">@alerta.Nome</div>
+                            <div class="text-secondary small">@alerta.Quantidade compras em @NomeMesAtual</div>
+                        </div>
+                        <span class="fw-semibold text-danger">@alerta.Total.ToString("C", culturaBr)</span>
+                    </li>
+                }
+                @if (ComerciosRepetidos.Count == 0)
+                {
+                    <li class="list-group-item text-secondary small">Nenhum comércio com @QuantidadeMinimaComercioRepetido ou mais compras neste mês</li>
+                }
+            </ul>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-semibold">
+                Categoria acima da média
+                <span class="text-secondary fw-normal small">(@((LimiarAcimaDaMedia - 1) * 100)%+ acima da média)</span>
+            </div>
+            <ul class="list-group list-group-flush">
+                @if (!HistoricoSuficiente)
+                {
+                    <li class="list-group-item text-secondary small">
+                        Ainda não há histórico de meses anteriores suficiente pra calcular uma média — volte depois de mais alguns meses de dados sincronizados.
+                    </li>
+                }
+                else
+                {
+                    @foreach (var alerta in CategoriasAcimaDaMedia)
+                    {
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <div class="fw-medium">@alerta.Nome</div>
+                                <div class="text-secondary small">
+                                    Média dos últimos @MesesComHistorico @(MesesComHistorico == 1 ? "mês" : "meses"): @alerta.Media.ToString("C", culturaBr)
+                                </div>
+                            </div>
+                            <span class="text-end">
+                                <div class="fw-semibold text-danger">@alerta.Atual.ToString("C", culturaBr)</div>
+                                <div class="text-danger small">@alerta.PercentualDaMedia.ToString("0", culturaBr)% da média</div>
+                            </span>
+                        </li>
+                    }
+                    @if (CategoriasAcimaDaMedia.Count == 0)
+                    {
+                        <li class="list-group-item text-secondary small">Nenhuma categoria acima da média neste mês</li>
+                    }
+                }
+            </ul>
+        </div>
+    </div>
+</div>
