@@ -8,6 +8,13 @@ namespace FinTrack.Data;
 /// massa em Transações quanto pra herdar categoria em novas importações.
 /// Ex.: "Compra no débito via NuPay|iFood" e "Estorno de Uber - NuPay" viram
 /// "IFOOD" e "UBER", batendo com as transações já categorizadas desses comércios.
+///
+/// Pra "Transferência Recebida|Fulano de Tal" o texto depois do "|" é o nome
+/// de quem mandou/recebeu — mantém isso como chave (não junta com
+/// "Transferência Recebida" sem nome) porque na prática o usuário categoriza
+/// diferente por remetente (ex.: salário sem nome vs. reembolso de uma pessoa
+/// específica), então agrupar só pelo prefixo genérico juntaria coisas que ele
+/// trata como categorias diferentes.
 /// </summary>
 public static partial class ComercioHelper
 {
