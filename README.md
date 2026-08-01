@@ -168,12 +168,17 @@ dotnet ef migrations list                # o que já foi aplicado
 A migration `InitialCreate` é um **baseline**: foi gerada a partir do banco que já existia e
 registrada em `__EFMigrationsHistory` sem recriar as tabelas.
 
-### Stored Procedures (obsoletas)
+### Stored Procedures (removidas)
 
-As 24 stored procedures do padrão anterior (`FT_[Área]_[Ação]`, com `BEGIN TRY/CATCH` e RAISERROR
-50001 em JSON) continuam no banco, mas **nenhuma é chamada pelo código**. O CRUD é LINQ sobre o
-DbContext, e a validação de input vive no `Validador`. O script
-`Banco e Procedures/BancoTabelaProcedures.sql` é mantido como histórico.
+O projeto nasceu com 24 stored procedures (`FT_[Área]_[Ação]`, com `BEGIN TRY/CATCH` e RAISERROR
+50001 em JSON), no padrão da Log Tecnologia. Elas foram **dropadas do banco e removidas do
+repositório** — o CRUD é LINQ sobre o DbContext e a validação de input vive no `Validador`.
+
+O código original continua no histórico do git, se algum dia servir de referência:
+
+```bash
+git show 05b5594:"Banco e Procedures/BancoTabelaProcedures.sql"
+```
 
 ---
 
