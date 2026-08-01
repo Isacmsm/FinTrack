@@ -46,23 +46,40 @@
         NomeMesAtual = culturaBr.DateTimeFormat.GetMonthName(inicioAtual.Month);
 
         // --- Comércio repetido no mês ---
-        // Agrupa em memória (não no SQL) porque a chave é um coalesce
-        // MerchantNome ?? Desc, e o volume mensal de um usuário é pequeno o
-        // suficiente pra isso não pesar. MerchantNome vem da Pluggy
-        // (transaction.merchant) e é mais confiável que Desc pra desduplicar
-        // "IFOOD *IFOOD 4471" vs "IFOOD *IFOOD 9902" — mas transações
-        // importadas antes desse campo existir, ou de origem sem merchant
-        // reconhecido, ainda caem no fallback de descrição bruta.
+        // Agrupa em memória (não no SQL) porque a chave vem do
+        // ComercioHelper, que é C# e não traduz pra SQL — o volume mensal de
+        // um usuário é pequeno o suficiente pra isso não pesar.
+        //
+        // A chave TEM que ser a mesma de Transações e da importação: o helper
+        // normaliza prefixo de gateway, sufixo de canal e número de parcela,
+        // então "Pag*Steam 1/3", "Pag*Steam 2/3" e "Pag*Steam 3/3" contam como
+        // um comércio só. Agrupando por MerchantNome ?? Desc cru, como era
+        // antes, cada parcela virava um comércio diferente e o alerta de
+        // "3+ compras no mesmo comércio" nunca disparava justamente pros
+        // casos que a recategorização em massa já trata como um só.
         var despesasMes = await Db.Transacoes
             .Where(t => t.IdUser == idUser && t.Data >= inicioAtual && t.Data < fimAtual
                         && t.IdCategoriaNavigation.Tipo && !t.IdCategoriaNavigation.EhMovimentacaoInterna)
             .Select(t => new { t.MerchantNome, t.Desc, t.Valor })
             .ToListAsync();
 
+        // Agrupa pela chave normalizada, mas exibe o nome do comércio vindo da
+        // Pluggy quando existe — a chave é MAIÚSCULA e serve pra comparar, não
+        // pra ler numa lista.
         ComerciosRepetidos = despesasMes
-            .GroupBy(t => (t.MerchantNome ?? t.Desc ?? "").Trim(), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(t => ComercioHelper.ChaveComercio(t.MerchantNome, t.Desc))
             .Where(g => !string.IsNullOrWhiteSpace(g.Key) && g.Count() >= QuantidadeMinimaComercioRepetido)
-            .Select(g => new AlertaComercio { Nome = g.Key, Quantidade = g.Count(), Total = g.Sum(t => t.Valor) })
+            .Select(g => new AlertaComercio
+            {
+                // OrderBy pra ser determinístico: sem ele, o nome exibido
+                // dependeria da ordem em que o banco devolveu as linhas.
+                Nome = g.Select(t => t.MerchantNome)
+                        .Where(n => !string.IsNullOrWhiteSpace(n))
+                        .OrderBy(n => n)
+                        .FirstOrDefault() ?? g.Key,
+                Quantidade = g.Count(),
+                Total = g.Sum(t => t.Valor)
+            })
             .OrderByDescending(a => a.Total)
             .ToList();
 
