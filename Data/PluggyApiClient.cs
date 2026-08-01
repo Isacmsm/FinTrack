@@ -104,7 +104,7 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
         if (!resposta.IsSuccessStatusCode)
         {
             var mensagem = await LerMensagemDeErroAsync(resposta);
-            throw new Exception($"Não foi possível autenticar com a Pluggy: {mensagem}");
+            throw new ErroDeNegocioException($"Não foi possível autenticar com a Pluggy: {mensagem}");
         }
 
         var corpo = await resposta.Content.ReadFromJsonAsync<JsonElement>();
@@ -161,7 +161,7 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
         if (!resposta.IsSuccessStatusCode)
         {
             var mensagem = await LerMensagemDeErroAsync(resposta);
-            throw new Exception($"Não foi possível gerar o connect token na Pluggy: {mensagem}");
+            throw new ErroDeNegocioException($"Não foi possível gerar o connect token na Pluggy: {mensagem}");
         }
 
         var corpo = await resposta.Content.ReadFromJsonAsync<JsonElement>(OpcoesJson);
@@ -190,7 +190,7 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
         if (resposta.StatusCode == HttpStatusCode.Conflict) return false;
 
         var mensagem = await LerMensagemDeErroAsync(resposta);
-        throw new Exception($"Não foi possível solicitar a atualização deste item na Pluggy: {mensagem}");
+        throw new ErroDeNegocioException($"Não foi possível solicitar a atualização deste item na Pluggy: {mensagem}");
     }
 
     /// <summary>
@@ -205,7 +205,7 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
         if (resposta.IsSuccessStatusCode || resposta.StatusCode == HttpStatusCode.NotFound) return;
 
         var mensagem = await LerMensagemDeErroAsync(resposta);
-        throw new Exception($"Não foi possível excluir este item na Pluggy: {mensagem}");
+        throw new ErroDeNegocioException($"Não foi possível excluir este item na Pluggy: {mensagem}");
     }
 
     /// <summary>
@@ -232,7 +232,7 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
         if (!resposta.IsSuccessStatusCode)
         {
             var mensagem = await LerMensagemDeErroAsync(resposta);
-            throw new Exception($"Não foi possível listar as contas deste item na Pluggy: {mensagem}");
+            throw new ErroDeNegocioException($"Não foi possível listar as contas deste item na Pluggy: {mensagem}");
         }
 
         var corpo = await resposta.Content.ReadFromJsonAsync<JsonElement>(OpcoesJson);
@@ -277,7 +277,7 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
             if (!resposta.IsSuccessStatusCode)
             {
                 var mensagem = await LerMensagemDeErroAsync(resposta);
-                throw new Exception($"Não foi possível listar as transações desta conta na Pluggy: {mensagem}");
+                throw new ErroDeNegocioException($"Não foi possível listar as transações desta conta na Pluggy: {mensagem}");
             }
 
             var corpo = await resposta.Content.ReadFromJsonAsync<JsonElement>(OpcoesJson);

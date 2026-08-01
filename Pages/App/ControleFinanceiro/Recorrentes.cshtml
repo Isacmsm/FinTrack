@@ -58,7 +58,7 @@
 
     public Task<IActionResult> OnPostSalvarAsync([FromBody] RecorrenteRequest request)
     {
-        return Util.ExecutarHandlerAsync(async () =>
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
         {
             var descricao = request.Descricao?.Trim() ?? "";
             var idUser = IdUserAtual;
@@ -73,12 +73,12 @@
             var categoriaValida = await Db.Categorias.AnyAsync(c =>
                 c.Id == request.IdCategoria && (c.IdUser == null || c.IdUser == idUser));
 
-            if (!categoriaValida) throw new Exception("Categoria inválida");
+            if (!categoriaValida) throw new ErroDeNegocioException("Categoria inválida");
 
             if (request.Id is int id)
             {
                 var recorrente = await Db.Recorrentes.FirstOrDefaultAsync(r => r.Id == id && r.IdUser == idUser);
-                if (recorrente is null) throw new Exception("Recorrente não encontrado");
+                if (recorrente is null) throw new ErroDeNegocioException("Recorrente não encontrado");
 
                 recorrente.Descricao = descricao;
                 recorrente.Valor = request.Valor!.Value;
@@ -107,11 +107,11 @@
 
     public Task<IActionResult> OnPostAlternarAtivoAsync([FromBody] AlternarAtivoRequest request)
     {
-        return Util.ExecutarHandlerAsync(async () =>
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
         {
             var idUser = IdUserAtual;
             var recorrente = await Db.Recorrentes.FirstOrDefaultAsync(r => r.Id == request.Id && r.IdUser == idUser);
-            if (recorrente is null) throw new Exception("Recorrente não encontrado");
+            if (recorrente is null) throw new ErroDeNegocioException("Recorrente não encontrado");
 
             recorrente.Ativo = !recorrente.Ativo;
             await Db.SaveChangesAsync();
@@ -121,14 +121,14 @@
 
     public Task<IActionResult> OnPostExcluirAsync([FromBody] ExcluirRequest request)
     {
-        return Util.ExecutarHandlerAsync(async () =>
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
         {
             var idUser = IdUserAtual;
             var recorrente = await Db.Recorrentes.FirstOrDefaultAsync(r => r.Id == request.Id && r.IdUser == idUser);
-            if (recorrente is null) throw new Exception("Recorrente não encontrado");
+            if (recorrente is null) throw new ErroDeNegocioException("Recorrente não encontrado");
 
             var emUso = await Db.Dividas.AnyAsync(d => d.IdRecorrente == recorrente.Id);
-            if (emUso) throw new Exception("Este recorrente está vinculado a uma dívida e não pode ser excluído");
+            if (emUso) throw new ErroDeNegocioException("Este recorrente está vinculado a uma dívida e não pode ser excluído");
 
             Db.Recorrentes.Remove(recorrente);
             await Db.SaveChangesAsync();

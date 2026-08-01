@@ -96,7 +96,7 @@
 
     public Task<IActionResult> OnPostSalvarAsync([FromBody] OrcamentoRequest request)
     {
-        return Util.ExecutarHandlerAsync(async () =>
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
         {
             var idUser = IdUserAtual;
 

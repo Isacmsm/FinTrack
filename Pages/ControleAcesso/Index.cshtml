@@ -59,7 +59,7 @@
 
     public Task<IActionResult> OnPostLoginAsync([FromBody] LoginRequest request)
     {
-        return Util.ExecutarHandlerAsync(async () =>
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
         {
             var email = request.Email?.Trim() ?? "";
 
@@ -75,7 +75,7 @@
             // a quem está tentando adivinhar quais contas existem.
             if (usuario is null || !SenhaConfere(usuario, request.Senha, out var precisaMigrar))
             {
-                throw new Exception("E-mail ou senha incorretos");
+                throw new ErroDeNegocioException("E-mail ou senha incorretos");
             }
 
             if (precisaMigrar)

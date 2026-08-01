@@ -48,7 +48,7 @@
 
     public Task<IActionResult> OnPostRegistroAsync([FromBody] RegistroRequest request)
     {
-        return Util.ExecutarHandlerAsync(async () =>
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
         {
             Validar(request);
 
@@ -57,7 +57,7 @@
             // Antes: IF EXISTS(SELECT Id FROM Usuario WHERE Email = @Email)
             if (await Db.Usuarios.AnyAsync(u => u.Email == email))
             {
-                throw new Exception("Operação cancelada. Já existe um usuário cadastrado com este e-mail");
+                throw new ErroDeNegocioException("Operação cancelada. Já existe um usuário cadastrado com este e-mail");
             }
 
             var usuario = new Usuario

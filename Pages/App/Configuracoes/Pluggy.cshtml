@@ -108,7 +108,7 @@
 
     public Task<IActionResult> OnPostSalvarConexaoAsync([FromBody] SalvarConexaoRequest request)
     {
-        return Util.ExecutarHandlerAsync(async () =>
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
         {
             var clientId = request.ClientId?.Trim() ?? "";
             var clientSecret = request.ClientSecret?.Trim() ?? "";
@@ -143,12 +143,12 @@
 
     public Task<IActionResult> OnPostGerarConnectTokenAsync()
     {
-        return Util.ExecutarHandlerAsync(async () =>
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
         {
             var idUser = IdUserAtual;
 
             var conexao = await Db.PluggyConexoes.FirstOrDefaultAsync(c => c.IdUser == idUser);
-            if (conexao is null) throw new Exception("Salve sua conexão Client ID/Secret antes de conectar um banco");
+            if (conexao is null) throw new ErroDeNegocioException("Salve sua conexão Client ID/Secret antes de conectar um banco");
 
             var clientId = Protetor.Unprotect(conexao.ClientIdProtegido);
             var clientSecret = Protetor.Unprotect(conexao.ClientSecretProtegido);
@@ -161,7 +161,7 @@
 
     public Task<IActionResult> OnPostRegistrarItemAsync([FromBody] RegistrarItemRequest request)
     {
-        return Util.ExecutarHandlerAsync(async () =>
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
         {
             var itemId = request.ItemId?.Trim() ?? "";
             var idUser = IdUserAtual;
@@ -171,18 +171,18 @@
                 .LancarSeInvalido();
 
             var conexao = await Db.PluggyConexoes.FirstOrDefaultAsync(c => c.IdUser == idUser);
-            if (conexao is null) throw new Exception("Salve sua conexão Client ID/Secret antes de registrar um banco");
+            if (conexao is null) throw new ErroDeNegocioException("Salve sua conexão Client ID/Secret antes de registrar um banco");
 
             var clientId = Protetor.Unprotect(conexao.ClientIdProtegido);
             var clientSecret = Protetor.Unprotect(conexao.ClientSecretProtegido);
             var apiKey = await PluggyApi.ObterApiKeyAsync(clientId, clientSecret);
 
             var itemPluggy = await PluggyApi.ObterItemAsync(apiKey, itemId)
-                ?? throw new Exception("Item ID não encontrado na Pluggy");
+                ?? throw new ErroDeNegocioException("Item ID não encontrado na Pluggy");
 
             if (await Db.PluggyItems.AnyAsync(i => i.ItemId == itemId))
             {
-                throw new Exception("Este Item já está registrado");
+                throw new ErroDeNegocioException("Este Item já está registrado");
             }
 
             var contas = await PluggyApi.ListarContasAsync(apiKey, itemId);
@@ -262,12 +262,12 @@
 
     public Task<IActionResult> OnPostBuscarAsync([FromBody] SincronizarRequest request)
     {
-        return Util.ExecutarHandlerAsync(() => ImportarTransacoesAsync(request.PluggyItemId, solicitarAtualizacao: false));
+        return Util.ExecutarHandlerAsync(HttpContext, () => ImportarTransacoesAsync(request.PluggyItemId, solicitarAtualizacao: false));
     }
 
     public Task<IActionResult> OnPostAtualizarAsync([FromBody] SincronizarRequest request)
     {
-        return Util.ExecutarHandlerAsync(() => ImportarTransacoesAsync(request.PluggyItemId, solicitarAtualizacao: true));
+        return Util.ExecutarHandlerAsync(HttpContext, () => ImportarTransacoesAsync(request.PluggyItemId, solicitarAtualizacao: true));
     }
 
     /// <summary>
@@ -277,15 +277,15 @@
     /// </summary>
     public Task<IActionResult> OnPostExcluirItemAsync([FromBody] ExcluirItemRequest request)
     {
-        return Util.ExecutarHandlerAsync(async () =>
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
         {
             var idUser = IdUserAtual;
 
             var conexao = await Db.PluggyConexoes.FirstOrDefaultAsync(c => c.IdUser == idUser);
-            if (conexao is null) throw new Exception("Conecte sua conta do Meu Pluggy antes de excluir uma conexão");
+            if (conexao is null) throw new ErroDeNegocioException("Conecte sua conta do Meu Pluggy antes de excluir uma conexão");
 
             var item = await Db.PluggyItems.FirstOrDefaultAsync(i => i.Id == request.PluggyItemId && i.IdUser == idUser);
-            if (item is null) throw new Exception("Conexão bancária não encontrada");
+            if (item is null) throw new ErroDeNegocioException("Conexão bancária não encontrada");
 
             var clientId = Protetor.Unprotect(conexao.ClientIdProtegido);
             var clientSecret = Protetor.Unprotect(conexao.ClientSecretProtegido);
@@ -316,10 +316,10 @@
         var idUser = IdUserAtual;
 
         var conexao = await Db.PluggyConexoes.FirstOrDefaultAsync(c => c.IdUser == idUser);
-        if (conexao is null) throw new Exception("Conecte sua conta do Meu Pluggy antes de sincronizar");
+        if (conexao is null) throw new ErroDeNegocioException("Conecte sua conta do Meu Pluggy antes de sincronizar");
 
         var item = await Db.PluggyItems.FirstOrDefaultAsync(i => i.Id == pluggyItemId && i.IdUser == idUser);
-        if (item is null) throw new Exception("Conexão bancária não encontrada");
+        if (item is null) throw new ErroDeNegocioException("Conexão bancária não encontrada");
 
         var clientId = Protetor.Unprotect(conexao.ClientIdProtegido);
         var clientSecret = Protetor.Unprotect(conexao.ClientSecretProtegido);

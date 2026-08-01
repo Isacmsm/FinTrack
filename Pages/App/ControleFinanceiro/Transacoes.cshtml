@@ -85,7 +85,7 @@
 
     public Task<IActionResult> OnPostSalvarAsync([FromBody] TransacaoRequest request)
     {
-        return Util.ExecutarHandlerAsync(async () =>
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
         {
             var descricao = request.Descricao?.Trim() ?? "";
             var novaCategoriaNome = request.NovaCategoriaNome?.Trim();
@@ -115,7 +115,7 @@
 
                 if (!categoriaValida)
                 {
-                    throw new Exception("Categoria inválida");
+                    throw new ErroDeNegocioException("Categoria inválida");
                 }
 
                 idCategoria = request.IdCategoria!.Value;
@@ -126,7 +126,7 @@
             if (request.Id is int id)
             {
                 var transacao = await Db.Transacoes.FirstOrDefaultAsync(t => t.Id == id && t.IdUser == idUser);
-                if (transacao is null) throw new Exception("Transação não encontrada");
+                if (transacao is null) throw new ErroDeNegocioException("Transação não encontrada");
 
                 var chaveComercio = ComercioHelper.ChaveComercio(transacao.MerchantNome, transacao.Desc);
 
@@ -170,11 +170,11 @@
 
     public Task<IActionResult> OnPostExcluirAsync([FromBody] ExcluirRequest request)
     {
-        return Util.ExecutarHandlerAsync(async () =>
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
         {
             var idUser = IdUserAtual;
             var transacao = await Db.Transacoes.FirstOrDefaultAsync(t => t.Id == request.Id && t.IdUser == idUser);
-            if (transacao is null) throw new Exception("Transação não encontrada");
+            if (transacao is null) throw new ErroDeNegocioException("Transação não encontrada");
 
             Db.Transacoes.Remove(transacao);
             await Db.SaveChangesAsync();
