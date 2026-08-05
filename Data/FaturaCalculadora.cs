@@ -67,11 +67,13 @@ public static class FaturaCalculadora
                              ?? transacoesCartao.FirstOrDefault(t => t.ContaPluggyId == idConta)?.ContaNome
                              ?? "Cartão";
 
-            // A janela de uma fatura fechada é (fechamento da fatura anterior,
-            // fechamento desta] — a Pluggy não devolve os ids das transações
-            // de cada fatura, então essa é a aproximação padrão pra atribuir
-            // compra a fatura. Pagamento de fatura nunca entra na janela
-            // (filtrado antes de fatiar), só compra/estorno de verdade.
+            // Cada transação de cartão já vem da Pluggy com o BillId da fatura
+            // a que pertence (CreditCardMetadata.billId) — é o dado oficial
+            // dela, não uma aproximação nossa. Só cai na janela de data quem
+            // ainda não tem BillId (o ciclo em aberto, que a Pluggy ainda não
+            // fechou como Bill). Uma janela de data por conta própria já
+            // errou compra parcelada (forecast pra fatura futura, sem BillId
+            // ainda) pra dentro da fatura fechada errada.
             var ordenadas = faturasPluggy.Where(f => f.ContaPluggyId == idConta)
                 .OrderBy(f => f.DataFechamento ?? f.DataVencimento)
                 .ToList();
@@ -80,14 +82,11 @@ public static class FaturaCalculadora
 
             foreach (var fatura in ordenadas)
             {
-                var transacoesDaFatura = fatura.DataFechamento is DateTime fechamento
-                    ? transacoesCartao
-                        .Where(t => t.ContaPluggyId == idConta && !t.IdCategoriaNavigation.EhMovimentacaoInterna
-                                    && t.Data > (fechamentoAnterior ?? DateTime.MinValue)
-                                    && t.Data <= fechamento)
-                        .OrderByDescending(t => t.Data)
-                        .ToList()
-                    : [];
+                var transacoesDaFatura = transacoesCartao
+                    .Where(t => t.ContaPluggyId == idConta && !t.IdCategoriaNavigation.EhMovimentacaoInterna
+                                && t.PluggyBillId == fatura.BillId)
+                    .OrderByDescending(t => t.Data)
+                    .ToList();
 
                 // bills.payments pode vir vazio pra essa fatura ainda. Fallback:
                 // procura no próprio extrato um "Recebimento de Fatura" com
@@ -118,13 +117,16 @@ public static class FaturaCalculadora
                 fechamentoAnterior = fatura.DataFechamento ?? fechamentoAnterior;
             }
 
-            // A Pluggy pode não ter devolvido ainda a Bill do ciclo corrente
-            // (desde o último fechamento conhecido até hoje), então é
-            // calculado aqui a partir das próprias transações (só
-            // compra/estorno, pagamento de fatura continua de fora), e
-            // marcado como estimativa, não dado oficial.
+            // A Pluggy ainda não fechou uma Bill pro ciclo corrente, então
+            // essas transações chegam sem BillId — calculado aqui a partir
+            // delas (só compra/estorno, pagamento de fatura continua de
+            // fora), e marcado como estimativa, não dado oficial. A data
+            // continua como cinto de segurança (não deixa uma transação
+            // muito antiga sem BillId, por qualquer falha da Pluggy, inflar
+            // o ciclo aberto).
             var transacoesEmAberto = transacoesCartao
                 .Where(t => t.ContaPluggyId == idConta && !t.IdCategoriaNavigation.EhMovimentacaoInterna
+                            && t.PluggyBillId == null
                             && t.Data > (fechamentoAnterior ?? DateTime.MinValue) && t.Data <= hoje)
                 .OrderByDescending(t => t.Data)
                 .ToList();
