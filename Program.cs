@@ -63,6 +63,13 @@ if (!app.Environment.IsDevelopment())
         KnownIPNetworks = { },
         KnownProxies = { }
     });
+
+    // Só em produção: o banco do VPS nasce vazio, e não há passo manual de
+    // deploy que rode "dotnet ef database update" (o publish não carrega as
+    // ferramentas do EF). Em dev o fluxo continua manual, como documentado
+    // no CLAUDE.md.
+    using var scope = app.Services.CreateScope();
+    scope.ServiceProvider.GetRequiredService<FinTrackDbContext>().Database.Migrate();
 }
 
 app.UseHttpsRedirection();
