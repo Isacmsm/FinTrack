@@ -4,6 +4,7 @@ using FinTrack.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace FinTrack.Migrations
 {
     [DbContext(typeof(FinTrackDbContext))]
-    partial class FinTrackDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260802172824_AddPluggyInvestimento")]
+    partial class AddPluggyInvestimento
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -135,46 +138,6 @@ namespace FinTrack.Migrations
                     b.HasIndex("IdUser");
 
                     b.ToTable("Divida", (string)null);
-                });
-
-            modelBuilder.Entity("FinTrack.Models.MetaInvestimento", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CriadoEm")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("(sysutcdatetime())");
-
-                    b.Property<DateTime?>("DataAlvo")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("IdUser")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Nome")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(100)");
-
-                    b.Property<string>("TipoScope")
-                        .HasMaxLength(50)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(50)");
-
-                    b.Property<decimal>("ValorAlvo")
-                        .HasColumnType("money");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IdUser");
-
-                    b.ToTable("MetaInvestimento", (string)null);
                 });
 
             modelBuilder.Entity("FinTrack.Models.Orcamento", b =>
@@ -309,9 +272,6 @@ namespace FinTrack.Migrations
                         .HasColumnType("varchar(50)");
 
                     b.Property<DateTime>("Data")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime?>("DataAplicacao")
                         .HasColumnType("datetime2");
 
                     b.Property<DateTime?>("DataVencimento")
@@ -669,18 +629,6 @@ namespace FinTrack.Migrations
                     b.Navigation("IdUserNavigation");
                 });
 
-            modelBuilder.Entity("FinTrack.Models.MetaInvestimento", b =>
-                {
-                    b.HasOne("FinTrack.Models.Usuario", "IdUserNavigation")
-                        .WithMany("Metas")
-                        .HasForeignKey("IdUser")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("FK_MetaInvestimento_Usuario");
-
-                    b.Navigation("IdUserNavigation");
-                });
-
             modelBuilder.Entity("FinTrack.Models.Orcamento", b =>
                 {
                     b.HasOne("FinTrack.Models.Categoria", "IdCategoriaNavigation")
@@ -811,8 +759,6 @@ namespace FinTrack.Migrations
                     b.Navigation("Categorias");
 
                     b.Navigation("Dividas");
-
-                    b.Navigation("Metas");
 
                     b.Navigation("Orcamentos");
 

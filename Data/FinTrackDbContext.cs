@@ -30,7 +30,11 @@ public partial class FinTrackDbContext : DbContext
 
     public virtual DbSet<PluggyFatura> PluggyFaturas { get; set; }
 
+    public virtual DbSet<PluggyInvestimento> PluggyInvestimentos { get; set; }
+
     public virtual DbSet<Orcamento> Orcamentos { get; set; }
+
+    public virtual DbSet<MetaInvestimento> Metas { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -231,6 +235,62 @@ public partial class FinTrackDbContext : DbContext
                 .HasConstraintName("FK_PluggyFatura_Usuario");
         });
 
+        modelBuilder.Entity<PluggyInvestimento>(entity =>
+        {
+            entity.ToTable("PluggyInvestimento");
+
+            entity.Property(e => e.InvestmentId)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.NomeConector)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.Tipo)
+                .HasMaxLength(20)
+                .IsUnicode(false);
+            entity.Property(e => e.Subtipo)
+                .HasMaxLength(30)
+                .IsUnicode(false);
+            entity.Property(e => e.Nome)
+                .HasMaxLength(200)
+                .IsUnicode(false);
+            entity.Property(e => e.Codigo)
+                .HasMaxLength(50)
+                .IsUnicode(false);
+            entity.Property(e => e.Isin)
+                .HasMaxLength(20)
+                .IsUnicode(false);
+            entity.Property(e => e.MoedaCodigo)
+                .HasMaxLength(3)
+                .IsUnicode(false);
+            entity.Property(e => e.TipoTaxa)
+                .HasMaxLength(20)
+                .IsUnicode(false);
+            entity.Property(e => e.Emissor)
+                .HasMaxLength(200)
+                .IsUnicode(false);
+            entity.Property(e => e.Status)
+                .HasMaxLength(20)
+                .IsUnicode(false);
+            entity.Property(e => e.Saldo).HasColumnType("money");
+            entity.Property(e => e.ValorOriginal).HasColumnType("money");
+            entity.Property(e => e.LucroInformado).HasColumnType("money");
+            entity.Property(e => e.ValorDisponivelResgate).HasColumnType("money");
+            // decimal comum (não money): valor de cota chega com até 6 casas
+            // (ex.: 0.010333), que o scale 4 do money truncaria.
+            entity.Property(e => e.Quantidade).HasPrecision(18, 6);
+            entity.Property(e => e.ValorCota).HasPrecision(18, 6);
+            entity.Property(e => e.Taxa).HasPrecision(9, 4);
+            entity.Property(e => e.TaxaAnualFixa).HasPrecision(9, 4);
+
+            entity.HasIndex(e => e.InvestmentId).IsUnique();
+
+            entity.HasOne(d => d.IdUserNavigation).WithMany(p => p.PluggyInvestimentos)
+                .HasForeignKey(d => d.IdUser)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_PluggyInvestimento_Usuario");
+        });
+
         modelBuilder.Entity<Orcamento>(entity =>
         {
             entity.ToTable("Orcamento");
@@ -248,6 +308,25 @@ public partial class FinTrackDbContext : DbContext
                 .HasForeignKey(d => d.IdUser)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("FK_Orcamento_Usuario");
+        });
+
+        modelBuilder.Entity<MetaInvestimento>(entity =>
+        {
+            entity.ToTable("MetaInvestimento");
+
+            entity.Property(e => e.Nome)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.ValorAlvo).HasColumnType("money");
+            entity.Property(e => e.TipoScope)
+                .HasMaxLength(50)
+                .IsUnicode(false);
+            entity.Property(e => e.CriadoEm).HasDefaultValueSql("(sysutcdatetime())");
+
+            entity.HasOne(d => d.IdUserNavigation).WithMany(p => p.Metas)
+                .HasForeignKey(d => d.IdUser)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_MetaInvestimento_Usuario");
         });
 
         modelBuilder.Entity<Usuario>(entity =>

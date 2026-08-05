@@ -64,6 +64,31 @@ public class PluggyCreditCardMetadataDto
     public string? BillForecastDate { get; set; }
 }
 
+public class PluggyInvestmentDto
+{
+    public string Id { get; set; } = "";
+    public string Type { get; set; } = "";
+    public string? Subtype { get; set; }
+    public string Name { get; set; } = "";
+    public string? Code { get; set; }
+    public string? Isin { get; set; }
+    public decimal Balance { get; set; }
+    public decimal? AmountOriginal { get; set; }
+    public decimal? AmountProfit { get; set; }
+    public decimal? AmountWithdrawal { get; set; }
+    public decimal? Quantity { get; set; }
+    public decimal? Value { get; set; }
+    public string? CurrencyCode { get; set; }
+    public DateTime Date { get; set; }
+    public DateTime? DueDate { get; set; }
+    public DateTime? PurchaseDate { get; set; }
+    public decimal? Rate { get; set; }
+    public string? RateType { get; set; }
+    public decimal? FixedAnnualRate { get; set; }
+    public string? Issuer { get; set; }
+    public string Status { get; set; } = "";
+}
+
 public class PluggyBillDto
 {
     public string Id { get; set; } = "";
@@ -223,6 +248,38 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
         var corpo = await resposta.Content.ReadFromJsonAsync<JsonElement>(OpcoesJson);
         var conectores = JsonSerializer.Deserialize<List<PluggyConnectorDto>>(corpo.GetProperty("results").GetRawText(), OpcoesJson) ?? [];
         return conectores.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// /investments é paginado (default pageSize 500) mas por item raramente
+    /// passa disso — pagina mesmo assim pelo total de páginas devolvido, sem
+    /// cursor (diferente de /v2/transactions).
+    /// </summary>
+    public async Task<List<PluggyInvestmentDto>> ListarInvestimentosAsync(string apiKey, string itemId)
+    {
+        var investimentos = new List<PluggyInvestmentDto>();
+        var pagina = 1;
+        int totalPaginas;
+
+        do
+        {
+            var caminho = $"/investments?itemId={itemId}&page={pagina}";
+            var resposta = await Cliente.SendAsync(NovaRequisicao(HttpMethod.Get, caminho, apiKey));
+
+            if (!resposta.IsSuccessStatusCode)
+            {
+                var mensagem = await LerMensagemDeErroAsync(resposta);
+                throw new ErroDeNegocioException($"Não foi possível listar os investimentos deste item na Pluggy: {mensagem}");
+            }
+
+            var corpo = await resposta.Content.ReadFromJsonAsync<JsonElement>(OpcoesJson);
+            investimentos.AddRange(JsonSerializer.Deserialize<List<PluggyInvestmentDto>>(corpo.GetProperty("results").GetRawText(), OpcoesJson) ?? []);
+
+            totalPaginas = corpo.TryGetProperty("totalPages", out var tp) ? tp.GetInt32() : 1;
+            pagina++;
+        } while (pagina <= totalPaginas);
+
+        return investimentos;
     }
 
     public async Task<List<PluggyAccountDto>> ListarContasAsync(string apiKey, string itemId)

@@ -1,0 +1,293 @@
+@page
+@using System.Globalization
+@using Microsoft.AspNetCore.Http
+@using FinTrack.Data
+@using FinTrack.Models
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@functions {
+
+    /// <summary>
+    /// Só ACTIVE e PENDING entram na página. TOTAL_WITHDRAWAL fica de fora —
+    /// bancos como o Nubank fecham e reabrem uma posição de CDB por dia pro
+    /// "cofrinho" automático, então a maioria das linhas com esse status é
+    /// saldo zerado histórico (dezenas por usuário), não dinheiro perdido.
+    /// Mostrar isso pra alguém que não conhece investimentos só confundiria.
+    /// </summary>
+    private static readonly string[] StatusExibidos = ["ACTIVE", "PENDING"];
+
+    public List<PluggyInvestimento> Investimentos { get; set; } = [];
+
+    public bool TemSincronizacao { get; set; }
+
+    private int IdUserAtual => HttpContext.Session.GetInt32("IdUser")!.Value;
+
+    public async Task OnGetAsync()
+    {
+        var idUser = IdUserAtual;
+
+        TemSincronizacao = await Db.PluggyInvestimentos.AnyAsync(i => i.IdUser == idUser);
+
+        Investimentos = await Db.PluggyInvestimentos
+            .Where(i => i.IdUser == idUser && StatusExibidos.Contains(i.Status))
+            .OrderByDescending(i => i.Saldo)
+            .ToListAsync();
+    }
+
+    /// <summary>Nome de exibição pt-BR do type — a explicação de "o que é isso" que quem não conhece investimento precisa.</summary>
+    private static readonly Dictionary<string, (string Titulo, string Explicacao)> InfoTipo = new()
+    {
+        ["FIXED_INCOME"] = ("Renda fixa", "Você empresta dinheiro (pro banco, pra empresas ou pro governo) e sabe de antemão a regra de quanto vai receber de volta. Risco baixo, retorno previsível."),
+        ["EQUITY"] = ("Renda variável", "Ações e fundos imobiliários negociados na bolsa. O valor sobe e desce todo dia — risco maior, mas com potencial de ganho maior no longo prazo."),
+        ["MUTUAL_FUND"] = ("Fundos de investimento", "Seu dinheiro junto com o de outras pessoas, administrado por um profissional que decide onde aplicar. O rendimento depende da estratégia do fundo."),
+        ["ETF"] = ("Fundo negociado em bolsa (ETF)", "Como um fundo de investimento, mas comprado e vendido na bolsa como se fosse uma ação — geralmente segue um índice."),
+        ["COE"] = ("Certificado de Operações Estruturadas", "Produto com regras de ganho combinadas no início, atrelado a algum índice ou ativo. Pode ter carência e regras específicas de resgate."),
+        ["SECURITY"] = ("Previdência privada", "Plano de aposentadoria complementar (PGBL/VGBL) — pensado pra longo prazo, geralmente com regras próprias de imposto."),
+        ["OTHER"] = ("Outros", "Investimento que não se encaixa nas categorias acima.")
+    };
+
+    private static readonly Dictionary<string, string> InfoSubtipo = new()
+    {
+        ["CDB"] = "CDB (Certificado de Depósito Bancário)",
+        ["LCI"] = "LCI (Letra de Crédito Imobiliário)",
+        ["LCA"] = "LCA (Letra de Crédito do Agronegócio)",
+        ["LC"] = "LC (Letra de Câmbio)",
+        ["LF"] = "LF (Letra Financeira)",
+        ["LIG"] = "LIG (Letra Imobiliária Garantida)",
+        ["TREASURY"] = "Tesouro Direto",
+        ["DEBENTURES"] = "Debênture",
+        ["CRI"] = "CRI (Certificado de Recebíveis Imobiliários)",
+        ["CRA"] = "CRA (Certificado de Recebíveis do Agronegócio)",
+        ["CORPORATE_DEBT"] = "Dívida corporativa",
+        ["STOCK"] = "Ação",
+        ["BDR"] = "BDR (recibo de ação estrangeira)",
+        ["REAL_ESTATE_FUND"] = "Fundo imobiliário (FII)",
+        ["DERIVATIVES"] = "Derivativo",
+        ["OPTION"] = "Opção",
+        ["ETF"] = "ETF",
+        ["INVESTMENT_FUND"] = "Fundo de investimento",
+        ["MULTIMARKET_FUND"] = "Fundo multimercado",
+        ["FIXED_INCOME_FUND"] = "Fundo de renda fixa",
+        ["STOCK_FUND"] = "Fundo de ações",
+        ["ETF_FUND"] = "Fundo de ETF",
+        ["OFFSHORE_FUND"] = "Fundo no exterior",
+        ["FIP_FUND"] = "FIP (Fundo de Investimento em Participações)",
+        ["EXCHANGE_FUND"] = "Fundo cambial",
+        ["FI_INFRA"] = "Fundo de infraestrutura",
+        ["FI_AGRO"] = "Fundo do agronegócio",
+        ["STRUCTURED_NOTE"] = "Nota estruturada",
+        ["RETIREMENT"] = "Previdência"
+    };
+
+    private static readonly Dictionary<string, string> InfoIndexador = new()
+    {
+        ["CDI"] = "CDI",
+        ["SELIC"] = "Selic",
+        ["IPCA"] = "IPCA",
+        ["IGPM"] = "IGP-M",
+        ["DOLAR"] = "Dólar",
+        ["EURO"] = "Euro"
+    };
+
+    private static string TituloTipo(string tipo) => InfoTipo.TryGetValue(tipo, out var info) ? info.Titulo : tipo;
+    private static string ExplicacaoTipo(string tipo) => InfoTipo.TryGetValue(tipo, out var info) ? info.Explicacao : "";
+    private static string TituloSubtipo(string? subtipo) => subtipo is not null && InfoSubtipo.TryGetValue(subtipo, out var nome) ? nome : subtipo ?? "";
+
+    /// <summary>
+    /// Tenta descrever a taxa em português. CDB/LCI/etc. costumam vir como
+    /// "% do índice" (rate=100, rateType=CDI → "100% do CDI"); Tesouro Selic
+    /// costuma vir como spread sobre o índice (rate pequeno, ex.: 0.08 →
+    /// "Selic + 0,08% ao ano"). Sem dado suficiente, devolve null e a página
+    /// simplesmente não mostra a linha de taxa.
+    /// </summary>
+    private static string? DescreverTaxa(PluggyInvestimento inv)
+    {
+        var indexador = inv.TipoTaxa is not null && InfoIndexador.TryGetValue(inv.TipoTaxa, out var nomeIndexador) ? nomeIndexador : inv.TipoTaxa;
+
+        if (inv.Taxa is decimal taxa && indexador is not null)
+        {
+            var ehSpread = inv.Subtipo == "TREASURY" && taxa < 10;
+            var baseDescricao = ehSpread
+                ? $"{indexador} + {taxa.ToString("0.##", CultureInfo.GetCultureInfo("pt-BR"))}% ao ano"
+                : $"{taxa.ToString("0.##", CultureInfo.GetCultureInfo("pt-BR"))}% do {indexador}";
+
+            return inv.TaxaAnualFixa is decimal fixaExtra
+                ? $"{baseDescricao} + {fixaExtra.ToString("0.##", CultureInfo.GetCultureInfo("pt-BR"))}% ao ano"
+                : baseDescricao;
+        }
+
+        if (inv.TaxaAnualFixa is decimal fixa)
+            return $"Pré-fixado, {fixa.ToString("0.##", CultureInfo.GetCultureInfo("pt-BR"))}% ao ano";
+
+        return null;
+    }
+
+    private static decimal Rendimento(PluggyInvestimento inv) => inv.LucroInformado ?? (inv.Saldo - (inv.ValorOriginal ?? inv.Saldo));
+
+    /// <summary>
+    /// Chave de "caixinha": a Pluggy não devolve o nome da caixinha em
+    /// /investments — todo CDB do cofrinho automático chega com o mesmo nome
+    /// genérico. Existe até um campo pensado pra isso em /accounts
+    /// (bankData.reservedBalances, com exemplo "Caixinha Para Férias" na
+    /// documentação), mas na conta real testada ele veio null mesmo com
+    /// hasReservedBalance=true — o dado não é entregue por esse conector,
+    /// mesma situação de Cartoes/Parcelas.cshtml com installmentNumber.
+    ///
+    /// Alternativa: a condição de rendimento (taxa + indexador) se mantém
+    /// igual dentro de uma mesma caixinha enquanto o CDB por baixo é fechado e
+    /// reaberto todo dia, e muda de uma caixinha pra outra — agrupar por isso
+    /// separa visualmente o que o Nubank separa por nome, mesmo sem saber o
+    /// nome de verdade. Só falha se duas caixinhas tiverem exatamente a mesma
+    /// taxa, caso em que elas aparecem juntas aqui sem forma de desmembrar.
+    /// </summary>
+    private static (string? Subtipo, string? Taxa) ChaveCondicao(PluggyInvestimento inv) => (inv.Subtipo, DescreverTaxa(inv));
+}
+@{
+    ViewData["Title"] = "Aplicações";
+    var culturaBr = new CultureInfo("pt-BR");
+    var grupos = Investimentos.GroupBy(i => i.Tipo).OrderByDescending(g => g.Sum(i => i.Saldo));
+    var patrimonioTotal = Investimentos.Sum(i => i.Saldo);
+
+    Func<PluggyInvestimento, object?> linhaInvestimento = @<li class="list-group-item">
+        @{
+            var rendimento = Rendimento(item);
+            var descricaoTaxa = DescreverTaxa(item);
+        }
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div>
+                <div class="fw-medium">
+                    @TituloSubtipo(item.Subtipo)
+                    @if (!string.IsNullOrWhiteSpace(item.Emissor))
+                    {
+                        <span class="text-secondary">— @item.Emissor</span>
+                    }
+                </div>
+                <div class="text-secondary small">
+                    @if (descricaoTaxa is not null)
+                    {
+                        <span>@descricaoTaxa</span>
+                    }
+                    @if (item.DataAplicacao is DateTime aplicacao)
+                    {
+                        <span>@(descricaoTaxa is not null ? " · " : "")Aplicado em @aplicacao.ToString("dd/MM/yyyy")</span>
+                    }
+                    @if (item.DataVencimento is DateTime vencimento)
+                    {
+                        <span>@(descricaoTaxa is not null || item.DataAplicacao is not null ? " · " : "")Vencimento @vencimento.ToString("dd/MM/yyyy")</span>
+                    }
+                    @if (item.NomeConector is { Length: > 0 } conector)
+                    {
+                        <span> · @conector</span>
+                    }
+                    @if (item.Status == "PENDING")
+                    {
+                        <span class="badge text-bg-light border text-secondary ms-1">Em processamento</span>
+                    }
+                </div>
+            </div>
+            <div class="text-end">
+                <div class="fw-semibold">@item.Saldo.ToString("C", culturaBr)</div>
+                @if (item.ValorOriginal is decimal original && original > 0)
+                {
+                    <div class="small @(rendimento >= 0 ? "text-success" : "text-danger")">
+                        @(rendimento >= 0 ? "+ " : "")@rendimento.ToString("C", culturaBr) desde a aplicação
+                    </div>
+                }
+            </div>
+        </div>
+    </li>;
+}
+
+<h1 class="font-display fs-2 fw-bold text-dark mb-0">Aplicações</h1>
+<p class="text-secondary mt-1">Suas posições de investimento, sincronizadas via Meu Pluggy</p>
+
+@if (Investimentos.Count > 0)
+{
+    <div class="card shadow-sm mt-3">
+        <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <span class="text-secondary">Patrimônio total em investimentos</span>
+            <span class="fs-4 fw-bold text-dark">@patrimonioTotal.ToString("C", culturaBr)</span>
+        </div>
+    </div>
+}
+
+<div class="d-grid gap-3 mt-3">
+    @foreach (var grupo in grupos)
+    {
+        var totalGrupo = grupo.Sum(i => i.Saldo);
+
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">
+                <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                    <span class="fw-semibold">@TituloTipo(grupo.Key)</span>
+                    <span class="fw-bold">@totalGrupo.ToString("C", culturaBr)</span>
+                </div>
+                <p class="text-secondary small mb-0 mt-1">@ExplicacaoTipo(grupo.Key)</p>
+            </div>
+
+            @if (grupo.Key == "FIXED_INCOME")
+            {
+                var subgrupos = grupo.GroupBy(ChaveCondicao).OrderByDescending(sg => sg.Sum(i => i.Saldo));
+
+                <div class="px-3 py-2 small text-secondary border-bottom bg-light-subtle">
+                    A Pluggy não informa o nome da "caixinha" — separamos abaixo por condição de rendimento
+                    (taxa/indexador), que se mantém igual dentro de uma mesma caixinha mesmo com o CDB sendo
+                    renovado todo dia.
+                </div>
+                <div class="accordion accordion-flush">
+                    @foreach (var subgrupo in subgrupos)
+                    {
+                        var totalSubgrupo = subgrupo.Sum(i => i.Saldo);
+                        var (subtipo, condicao) = subgrupo.Key;
+                        var qtd = subgrupo.Count();
+
+                        <details class="border-bottom" open="@(subgrupos.Count() == 1 ? "open" : null)">
+                            <summary class="px-3 py-2 d-flex align-items-center justify-content-between flex-wrap gap-2" style="cursor: pointer;">
+                                <span>
+                                    <span class="fw-medium">@(condicao ?? TituloSubtipo(subtipo))</span>
+                                    <span class="badge text-bg-light border text-secondary ms-1">@qtd posiç@(qtd == 1 ? "ão" : "ões")</span>
+                                </span>
+                                <span class="fw-semibold">@totalSubgrupo.ToString("C", culturaBr)</span>
+                            </summary>
+                            <ul class="list-group list-group-flush">
+                                @foreach (var inv in subgrupo.OrderBy(i => i.DataAplicacao))
+                                {
+                                    @linhaInvestimento(inv)
+                                }
+                            </ul>
+                        </details>
+                    }
+                </div>
+            }
+            else
+            {
+                <ul class="list-group list-group-flush">
+                    @foreach (var inv in grupo.OrderByDescending(i => i.Saldo))
+                    {
+                        @linhaInvestimento(inv)
+                    }
+                </ul>
+            }
+        </div>
+    }
+
+    @if (Investimentos.Count == 0)
+    {
+        <div class="card shadow-sm">
+            <div class="card-body text-secondary small text-center py-4">
+                @if (TemSincronizacao)
+                {
+                    <span>Nenhuma posição em aberto no momento — todas as aplicações sincronizadas já foram resgatadas.</span>
+                }
+                else
+                {
+                    <span>
+                        Nenhum investimento sincronizado ainda. Clique em Buscar/Atualizar em
+                        <a asp-page="/App/Configuracoes/Pluggy" class="text-decoration-none">Meu Pluggy</a> pra importar —
+                        só funciona se o banco conectado também disponibilizar dados de investimento pra Pluggy.
+                    </span>
+                }
+            </div>
+        </div>
+    }
+</div>

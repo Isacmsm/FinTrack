@@ -1,0 +1,390 @@
+@page
+@using System.Globalization
+@using Microsoft.AspNetCore.Http
+@using FinTrack.Data
+@using FinTrack.Models
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@functions {
+
+    /// <summary>Mesmo filtro da página Aplicações — TOTAL_WITHDRAWAL é saldo zerado histórico, não deve entrar em soma nenhuma.</summary>
+    private static readonly string[] StatusExibidos = ["ACTIVE", "PENDING"];
+
+    private static readonly Dictionary<string, string> TituloTipo = new()
+    {
+        ["FIXED_INCOME"] = "Renda fixa",
+        ["EQUITY"] = "Renda variável",
+        ["MUTUAL_FUND"] = "Fundos de investimento",
+        ["ETF"] = "Fundo negociado em bolsa (ETF)",
+        ["COE"] = "Certificado de Operações Estruturadas",
+        ["SECURITY"] = "Previdência privada",
+        ["OTHER"] = "Outros"
+    };
+
+    public class LinhaMeta
+    {
+        public int Id { get; set; }
+        public string Nome { get; set; } = "";
+        public decimal ValorAlvo { get; set; }
+        public DateTime? DataAlvo { get; set; }
+        public string? TipoScope { get; set; }
+        public decimal SaldoAtual { get; set; }
+        public decimal Percentual => ValorAlvo > 0 ? Math.Min(Math.Round(SaldoAtual / ValorAlvo * 100, 0), 100) : 0;
+        public bool Atingida => SaldoAtual >= ValorAlvo;
+        public int? MesesRestantes => DataAlvo is { } data ? Math.Max(1, ((data.Year - DateTime.Today.Year) * 12) + data.Month - DateTime.Today.Month) : null;
+        public decimal? AporteMensalNecessario => !Atingida && DataAlvo is not null && DataAlvo >= DateTime.Today && MesesRestantes is { } meses
+            ? Math.Max(0, ValorAlvo - SaldoAtual) / meses
+            : null;
+        public bool PrazoVencido => !Atingida && DataAlvo is { } data && data < DateTime.Today;
+    }
+
+    public class MetaRequest
+    {
+        public int? Id { get; set; }
+        public string Nome { get; set; } = "";
+        public decimal? ValorAlvo { get; set; }
+        public string? DataAlvo { get; set; }
+        public string? TipoScope { get; set; }
+    }
+
+    public class ExcluirRequest
+    {
+        public int Id { get; set; }
+    }
+
+    public List<LinhaMeta> Metas { get; set; } = [];
+    public bool TemSincronizacao { get; set; }
+
+    private int IdUserAtual => HttpContext.Session.GetInt32("IdUser")!.Value;
+
+    public async Task OnGetAsync()
+    {
+        var idUser = IdUserAtual;
+
+        TemSincronizacao = await Db.PluggyInvestimentos.AnyAsync(i => i.IdUser == idUser);
+
+        var investimentos = await Db.PluggyInvestimentos
+            .Where(i => i.IdUser == idUser && StatusExibidos.Contains(i.Status))
+            .Select(i => new { i.Tipo, i.Saldo })
+            .ToListAsync();
+
+        var metas = await Db.Metas
+            .Where(m => m.IdUser == idUser)
+            .OrderBy(m => m.DataAlvo ?? DateTime.MaxValue)
+            .ThenBy(m => m.Nome)
+            .ToListAsync();
+
+        Metas = metas
+            .Select(m => new LinhaMeta
+            {
+                Id = m.Id,
+                Nome = m.Nome,
+                ValorAlvo = m.ValorAlvo,
+                DataAlvo = m.DataAlvo,
+                TipoScope = m.TipoScope,
+                SaldoAtual = investimentos
+                    .Where(i => m.TipoScope == null || i.Tipo == m.TipoScope)
+                    .Sum(i => i.Saldo)
+            })
+            .ToList();
+    }
+
+    public Task<IActionResult> OnPostSalvarAsync([FromBody] MetaRequest request)
+    {
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
+        {
+            var idUser = IdUserAtual;
+            var nome = request.Nome?.Trim() ?? "";
+            var dataAlvoValida = string.IsNullOrWhiteSpace(request.DataAlvo)
+                || DateTime.TryParseExact(request.DataAlvo, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _);
+
+            new Validador()
+                .Exigir(!string.IsNullOrWhiteSpace(nome), "nome", "Informe o nome da meta")
+                .Exigir(request.ValorAlvo is > 0, "valorAlvo", "Informe um valor maior que zero")
+                .Exigir(dataAlvoValida, "dataAlvo", "Data inválida")
+                .LancarSeInvalido();
+
+            DateTime? dataAlvo = !string.IsNullOrWhiteSpace(request.DataAlvo)
+                ? DateTime.ParseExact(request.DataAlvo, "yyyy-MM-dd", CultureInfo.InvariantCulture)
+                : null;
+
+            var tipoScope = string.IsNullOrWhiteSpace(request.TipoScope) ? null : request.TipoScope;
+
+            if (request.Id is int id)
+            {
+                var meta = await Db.Metas.FirstOrDefaultAsync(m => m.Id == id && m.IdUser == idUser);
+                if (meta is null) throw new ErroDeNegocioException("Meta não encontrada");
+
+                meta.Nome = nome;
+                meta.ValorAlvo = request.ValorAlvo!.Value;
+                meta.DataAlvo = dataAlvo;
+                meta.TipoScope = tipoScope;
+            }
+            else
+            {
+                Db.Metas.Add(new MetaInvestimento
+                {
+                    IdUser = idUser,
+                    Nome = nome,
+                    ValorAlvo = request.ValorAlvo!.Value,
+                    DataAlvo = dataAlvo,
+                    TipoScope = tipoScope,
+                    CriadoEm = DateTime.UtcNow
+                });
+            }
+
+            await Db.SaveChangesAsync();
+            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+        });
+    }
+
+    public Task<IActionResult> OnPostExcluirAsync([FromBody] ExcluirRequest request)
+    {
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
+        {
+            var idUser = IdUserAtual;
+            var meta = await Db.Metas.FirstOrDefaultAsync(m => m.Id == request.Id && m.IdUser == idUser);
+            if (meta is null) throw new ErroDeNegocioException("Meta não encontrada");
+
+            Db.Metas.Remove(meta);
+            await Db.SaveChangesAsync();
+            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+        });
+    }
+}
+@{
+    ViewData["Title"] = "Metas";
+    var culturaBr = new CultureInfo("pt-BR");
+}
+
+<div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-3">
+    <div>
+        <h1 class="font-display fs-2 fw-bold text-dark mb-0">Metas</h1>
+        <p class="text-secondary mt-1 mb-0">Progresso puxado direto do saldo sincronizado em Aplicações</p>
+    </div>
+    <button type="button" class="btn btn-primary text-nowrap" onclick="abrirModalNovo()">+ Nova meta</button>
+</div>
+
+@if (!TemSincronizacao)
+{
+    <div class="alert alert-warning py-2 px-3 small">
+        Nenhum investimento sincronizado ainda. Conecte uma conta em
+        <a href="/App/Configuracoes/Pluggy">Configurações &gt; Pluggy</a> pra que o progresso das metas seja calculado.
+    </div>
+}
+
+<div class="alert alert-danger py-2 px-3 small d-none" id="erroGeral"></div>
+
+<div class="row g-3">
+    @foreach (var meta in Metas)
+    {
+        <div class="col-md-6 col-xl-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6 class="fw-semibold mb-0">@meta.Nome</h6>
+                            @if (meta.TipoScope is not null)
+                            {
+                                <span class="text-secondary small">@(TituloTipo.GetValueOrDefault(meta.TipoScope, meta.TipoScope))</span>
+                            }
+                            else
+                            {
+                                <span class="text-secondary small">Todos os investimentos</span>
+                            }
+                        </div>
+                        <div>
+                            <button type="button" class="btn btn-sm btn-link text-secondary p-0 me-2 btn-editar-meta"
+                                    data-id="@meta.Id"
+                                    data-nome="@meta.Nome"
+                                    data-valor-alvo="@meta.ValorAlvo.ToString(CultureInfo.InvariantCulture)"
+                                    data-data-alvo="@(meta.DataAlvo?.ToString("yyyy-MM-dd"))"
+                                    data-tipo-scope="@meta.TipoScope">Editar</button>
+                            <button type="button" class="btn btn-sm btn-link text-danger p-0 btn-excluir-meta" data-id="@meta.Id">Excluir</button>
+                        </div>
+                    </div>
+
+                    <div class="progress mb-2" style="height: 8px;">
+                        <div class="progress-bar @(meta.Atingida ? "bg-success" : "bg-primary")" style="width: @meta.Percentual%;"></div>
+                    </div>
+
+                    <div class="d-flex justify-content-between small mb-1">
+                        <span class="fw-semibold">@meta.SaldoAtual.ToString("C", culturaBr)</span>
+                        <span class="text-secondary">de @meta.ValorAlvo.ToString("C", culturaBr)</span>
+                    </div>
+
+                    @if (meta.Atingida)
+                    {
+                        <span class="badge text-bg-success">Meta atingida</span>
+                    }
+                    else if (meta.DataAlvo is null)
+                    {
+                        <span class="text-secondary small">Sem prazo definido</span>
+                    }
+                    else if (meta.PrazoVencido)
+                    {
+                        <span class="text-danger small">Prazo vencido em @meta.DataAlvo.Value.ToString("dd/MM/yyyy")</span>
+                    }
+                    else
+                    {
+                        <span class="text-secondary small">
+                            Faltam @meta.MesesRestantes mês(es) — aporte de
+                            <strong class="text-dark">@meta.AporteMensalNecessario!.Value.ToString("C", culturaBr)/mês</strong>
+                            até @meta.DataAlvo.Value.ToString("dd/MM/yyyy")
+                        </span>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+    @if (Metas.Count == 0)
+    {
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body text-center text-secondary py-4">Nenhuma meta cadastrada</div>
+            </div>
+        </div>
+    }
+</div>
+
+<!-- Modal de criação/edição -->
+<div class="modal fade" id="modalMeta" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            @Html.AntiForgeryToken()
+            <div class="modal-header">
+                <h5 class="modal-title" id="tituloModalMeta">Nova meta</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="metaId" />
+
+                <div class="mb-3">
+                    <label for="metaNome" class="form-label">Nome</label>
+                    <input type="text" id="metaNome" class="form-control" placeholder="Ex.: Reserva de emergência" />
+                    <span class="erro-input text-danger small d-none" id="erroNome"></span>
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-6">
+                        <label for="metaValorAlvo" class="form-label">Valor alvo</label>
+                        <input type="number" step="0.01" min="0" id="metaValorAlvo" class="form-control" placeholder="0,00" />
+                        <span class="erro-input text-danger small d-none" id="erroValorAlvo"></span>
+                    </div>
+                    <div class="col-6">
+                        <label for="metaDataAlvo" class="form-label">Prazo (opcional)</label>
+                        <input type="date" id="metaDataAlvo" class="form-control" />
+                        <span class="erro-input text-danger small d-none" id="erroDataAlvo"></span>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label for="metaTipoScope" class="form-label">Considerar apenas (opcional)</label>
+                    <select id="metaTipoScope" class="form-select">
+                        <option value="">Todos os investimentos</option>
+                        @foreach (var (tipo, titulo) in TituloTipo)
+                        {
+                            <option value="@tipo">@titulo</option>
+                        }
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="btnSalvarMeta" onclick="salvarMeta()">Salvar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        const modalMeta = new bootstrap.Modal(document.getElementById('modalMeta'));
+
+        function token() {
+            return $('input[name="__RequestVerificationToken"]').first().val();
+        }
+
+        function abrirModalNovo() {
+            limparErros();
+            document.getElementById('tituloModalMeta').textContent = 'Nova meta';
+            $('#metaId').val('');
+            $('#metaNome').val('');
+            $('#metaValorAlvo').val('');
+            $('#metaDataAlvo').val('');
+            $('#metaTipoScope').val('');
+            modalMeta.show();
+        }
+
+        function abrirModalEditar(id, nome, valorAlvo, dataAlvo, tipoScope) {
+            limparErros();
+            document.getElementById('tituloModalMeta').textContent = 'Editar meta';
+            $('#metaId').val(id);
+            $('#metaNome').val(nome);
+            $('#metaValorAlvo').val(valorAlvo);
+            $('#metaDataAlvo').val(dataAlvo || '');
+            $('#metaTipoScope').val(tipoScope || '');
+            modalMeta.show();
+        }
+
+        $(document).on('click', '.btn-editar-meta', function () {
+            const $btn = $(this);
+            abrirModalEditar($btn.data('id'), $btn.data('nome'), $btn.data('valor-alvo'), $btn.data('data-alvo'), $btn.data('tipo-scope'));
+        });
+
+        $(document).on('click', '.btn-excluir-meta', function () {
+            excluirMeta($(this).data('id'));
+        });
+
+        function salvarMeta() {
+            limparErros();
+
+            const id = $('#metaId').val();
+
+            $('#btnSalvarMeta').prop('disabled', true);
+
+            $.ajax({
+                url: '/App/Investimentos/Metas?handler=Salvar',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': $('#modalMeta input[name="__RequestVerificationToken"]').val() },
+                data: JSON.stringify({
+                    id: id ? parseInt(id) : null,
+                    nome: $('#metaNome').val(),
+                    valorAlvo: $('#metaValorAlvo').val() ? parseFloat($('#metaValorAlvo').val()) : null,
+                    dataAlvo: $('#metaDataAlvo').val() || null,
+                    tipoScope: $('#metaTipoScope').val() || null
+                }),
+                success: function () {
+                    window.location.reload();
+                },
+                error: function (xhr) {
+                    $('#btnSalvarMeta').prop('disabled', false);
+                    mostrarErros(xhr);
+                }
+            });
+        }
+
+        function excluirMeta(id) {
+            if (!confirm('Excluir esta meta?')) return;
+
+            $.ajax({
+                url: '/App/Investimentos/Metas?handler=Excluir',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: { 'RequestVerificationToken': token() },
+                data: JSON.stringify({ id: id }),
+                success: function () {
+                    window.location.reload();
+                },
+                error: function (xhr) {
+                    if (xhr.status === 400 && xhr.responseJSON && xhr.responseJSON.mensagem) {
+                        alert(xhr.responseJSON.mensagem);
+                    } else {
+                        alert('Erro ao excluir meta.');
+                    }
+                }
+            });
+        }
+    </script>
+}

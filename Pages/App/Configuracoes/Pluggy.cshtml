@@ -470,10 +470,73 @@
             }
         }
 
+        var investimentosPluggy = await PluggyApi.ListarInvestimentosAsync(apiKey, item.ItemId);
+        var idsInvestimentosPluggy = investimentosPluggy.Select(i => i.Id).ToList();
+        var investimentosExistentesPorId = await Db.PluggyInvestimentos
+            .Where(i => idsInvestimentosPluggy.Contains(i.InvestmentId))
+            .ToDictionaryAsync(i => i.InvestmentId);
+
+        foreach (var inv in investimentosPluggy)
+        {
+            if (investimentosExistentesPorId.TryGetValue(inv.Id, out var invExistente))
+            {
+                invExistente.NomeConector = item.NomeConector;
+                invExistente.Tipo = inv.Type;
+                invExistente.Subtipo = inv.Subtype;
+                invExistente.Nome = inv.Name;
+                invExistente.Codigo = inv.Code;
+                invExistente.Isin = inv.Isin;
+                invExistente.Saldo = inv.Balance;
+                invExistente.ValorOriginal = inv.AmountOriginal;
+                invExistente.LucroInformado = inv.AmountProfit;
+                invExistente.ValorDisponivelResgate = inv.AmountWithdrawal;
+                invExistente.Quantidade = inv.Quantity;
+                invExistente.ValorCota = inv.Value;
+                invExistente.MoedaCodigo = inv.CurrencyCode;
+                invExistente.Data = inv.Date;
+                invExistente.DataVencimento = inv.DueDate;
+                invExistente.DataAplicacao = inv.PurchaseDate;
+                invExistente.Taxa = inv.Rate;
+                invExistente.TipoTaxa = inv.RateType;
+                invExistente.TaxaAnualFixa = inv.FixedAnnualRate;
+                invExistente.Emissor = inv.Issuer;
+                invExistente.Status = inv.Status;
+            }
+            else
+            {
+                Db.PluggyInvestimentos.Add(new PluggyInvestimento
+                {
+                    IdUser = idUser,
+                    InvestmentId = inv.Id,
+                    NomeConector = item.NomeConector,
+                    Tipo = inv.Type,
+                    Subtipo = inv.Subtype,
+                    Nome = inv.Name,
+                    Codigo = inv.Code,
+                    Isin = inv.Isin,
+                    Saldo = inv.Balance,
+                    ValorOriginal = inv.AmountOriginal,
+                    LucroInformado = inv.AmountProfit,
+                    ValorDisponivelResgate = inv.AmountWithdrawal,
+                    Quantidade = inv.Quantity,
+                    ValorCota = inv.Value,
+                    MoedaCodigo = inv.CurrencyCode,
+                    Data = inv.Date,
+                    DataVencimento = inv.DueDate,
+                    DataAplicacao = inv.PurchaseDate,
+                    Taxa = inv.Rate,
+                    TipoTaxa = inv.RateType,
+                    TaxaAnualFixa = inv.FixedAnnualRate,
+                    Emissor = inv.Issuer,
+                    Status = inv.Status
+                });
+            }
+        }
+
         item.UltimaSincronizacao = DateTime.UtcNow;
         await Db.SaveChangesAsync();
 
-        return new JsonResult(new { sucesso = true, novasTransacoes, atualizacaoSolicitada }) { StatusCode = 200 };
+        return new JsonResult(new { sucesso = true, novasTransacoes, atualizacaoSolicitada, investimentosSincronizados = investimentosPluggy.Count }) { StatusCode = 200 };
     }
 }
 @{
@@ -731,7 +794,7 @@
                     var aviso = response.atualizacaoSolicitada
                         ? 'Atualização solicitada à Pluggy — pode não ter efeito no Meu Pluggy (a atualização de verdade dele é diária/automática, ou manual em meu.pluggy.ai). Se já havia dados novos, eles já foram lidos agora.'
                         : '';
-                    alert(response.novasTransacoes + ' transação(ões) nova(s).' + (aviso ? '\n' + aviso : ''));
+                    alert(response.novasTransacoes + ' transação(ões) nova(s). ' + response.investimentosSincronizados + ' investimento(s) sincronizado(s).' + (aviso ? '\n' + aviso : ''));
                     window.location.reload();
                 },
                 error: function (xhr) {
