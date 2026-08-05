@@ -103,8 +103,14 @@ public static class FaturaCalculadora
                 List<Transacao>? pagamentosQueQuitam = null;
                 if (fatura.DataFechamento is not null)
                 {
+                    // Limite superior de 30 dias depois do vencimento — sem
+                    // isso a fatura mais antiga (processada primeiro) podia
+                    // "roubar" um pagamento de meses depois só por ele ainda
+                    // não ter sido usado.
+                    var limiteSuperior = fatura.DataVencimento.AddDays(30);
                     var candidatos = pagamentosRecebidos
-                        .Where(p => p.ContaPluggyId == idConta && !idsPagamentosUsados.Contains(p.Id) && p.Data >= fatura.DataFechamento)
+                        .Where(p => p.ContaPluggyId == idConta && !idsPagamentosUsados.Contains(p.Id)
+                                    && p.Data >= fatura.DataFechamento && p.Data <= limiteSuperior)
                         .OrderBy(p => p.Data)
                         .ToList();
 
@@ -150,14 +156,15 @@ public static class FaturaCalculadora
             // A Pluggy ainda não fechou uma Bill pro ciclo corrente, então
             // essas transações chegam sem BillId — calculado aqui a partir
             // delas (só compra/estorno, pagamento de fatura continua de
-            // fora), e marcado como estimativa, não dado oficial. A data
-            // continua como cinto de segurança (não deixa uma transação
-            // muito antiga sem BillId, por qualquer falha da Pluggy, inflar
-            // o ciclo aberto).
+            // fora), e marcado como estimativa, não dado oficial. Sem filtro
+            // de data: uma parcela com forecast pra fatura futura (ex.: "2/2"
+            // datada de quando a compra foi feita, BillId ainda null) tem
+            // Data anterior ao último fechamento — filtrar por data deixava
+            // essas invisíveis em qualquer lugar (nem na fatura fechada, nem
+            // aqui), pior que só estarem no bucket errado.
             var transacoesEmAberto = transacoesCartao
                 .Where(t => t.ContaPluggyId == idConta && !t.IdCategoriaNavigation.EhMovimentacaoInterna
-                            && t.PluggyBillId == null
-                            && t.Data > (fechamentoAnterior ?? DateTime.MinValue) && t.Data <= hoje)
+                            && t.PluggyBillId == null)
                 .OrderByDescending(t => t.Data)
                 .ToList();
 
