@@ -153,6 +153,10 @@ public partial class FinTrackDbContext : DbContext
                 .HasMaxLength(7)
                 .IsUnicode(false);
             entity.Property(e => e.PluggyValorCompraTotal).HasColumnType("money");
+            entity.Property(e => e.MoedaOriginalCodigo)
+                .HasMaxLength(3)
+                .IsUnicode(false);
+            entity.Property(e => e.ValorMoedaOriginal).HasColumnType("money");
 
             entity.HasIndex(e => e.PluggyTransactionId)
                 .IsUnique()

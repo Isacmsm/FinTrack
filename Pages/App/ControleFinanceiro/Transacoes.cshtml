@@ -251,6 +251,10 @@
                         <td>@transacao.IdCategoriaNavigation.Nome</td>
                         <td class="text-end @(despesa ? "text-danger" : "text-success") fw-semibold">
                             @((despesa ? "- " : "+ "))@transacao.Valor.ToString("C", culturaBr)
+                            @if (transacao.MoedaOriginalCodigo is not null)
+                            {
+                                <div class="small text-secondary fw-normal">@transacao.MoedaOriginalCodigo @transacao.ValorMoedaOriginal?.ToString("N2", culturaBr)</div>
+                            }
                         </td>
                         <td class="text-end">
                             <button type="button" class="btn btn-sm btn-link text-secondary p-0 me-2 btn-editar-transacao"

@@ -45,6 +45,9 @@ public class PluggyTransactionDto
     /// </summary>
     public decimal? AmountInAccountCurrency { get; set; }
 
+    /// <summary>Código ISO da moeda de Amount (ex.: "USD"). "BRL" na maioria das transações.</summary>
+    public string? CurrencyCode { get; set; }
+
     public DateTime Date { get; set; }
     public string Type { get; set; } = ""; // DEBIT ou CREDIT
     public string? Category { get; set; }

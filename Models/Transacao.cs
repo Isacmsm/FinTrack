@@ -70,6 +70,16 @@ public partial class Transacao
 
     public DateTime? PluggyDataCompra { get; set; }
 
+    /// <summary>
+    /// Só preenchido quando a Pluggy manda amountInAccountCurrency — ou
+    /// seja, quando a transação foi feita em moeda diferente da conta
+    /// (compra internacional). Valor é sempre o convertido em BRL; aqui
+    /// fica o valor e o código da moeda original, só pra exibição.
+    /// </summary>
+    public string? MoedaOriginalCodigo { get; set; }
+
+    public decimal? ValorMoedaOriginal { get; set; }
+
     public virtual Categoria IdCategoriaNavigation { get; set; } = null!;
 
     public virtual Usuario IdUserNavigation { get; set; } = null!;

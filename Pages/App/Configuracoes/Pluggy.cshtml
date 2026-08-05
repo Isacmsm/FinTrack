@@ -428,6 +428,8 @@
                     existente.PluggyParcelaTotal = t.CreditCardMetadata?.TotalInstallments;
                     existente.PluggyValorCompraTotal = t.CreditCardMetadata?.TotalAmount;
                     existente.PluggyDataCompra = t.CreditCardMetadata?.PurchaseDate;
+                    existente.MoedaOriginalCodigo = t.AmountInAccountCurrency.HasValue ? t.CurrencyCode : null;
+                    existente.ValorMoedaOriginal = t.AmountInAccountCurrency.HasValue ? Math.Abs(t.Amount) : null;
                     continue;
                 }
 
@@ -467,7 +469,9 @@
                     PluggyParcelaAtual = t.CreditCardMetadata?.InstallmentNumber,
                     PluggyParcelaTotal = t.CreditCardMetadata?.TotalInstallments,
                     PluggyValorCompraTotal = t.CreditCardMetadata?.TotalAmount,
-                    PluggyDataCompra = t.CreditCardMetadata?.PurchaseDate
+                    PluggyDataCompra = t.CreditCardMetadata?.PurchaseDate,
+                    MoedaOriginalCodigo = t.AmountInAccountCurrency.HasValue ? t.CurrencyCode : null,
+                    ValorMoedaOriginal = t.AmountInAccountCurrency.HasValue ? Math.Abs(t.Amount) : null
                 });
                 novasTransacoes++;
             }

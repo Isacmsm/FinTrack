@@ -129,6 +129,10 @@
                                     </td>
                                     <td class="text-end fw-semibold @(despesa ? "text-danger" : "text-success")" style="width: 140px;">
                                         @((despesa ? "- " : "+ "))@transacao.Valor.ToString("C", culturaBr)
+                                        @if (transacao.MoedaOriginalCodigo is not null)
+                                        {
+                                            <div class="small text-secondary fw-normal">@transacao.MoedaOriginalCodigo @transacao.ValorMoedaOriginal?.ToString("N2", culturaBr)</div>
+                                        }
                                     </td>
                                 </tr>
                             }
