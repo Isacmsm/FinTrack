@@ -1,0 +1,367 @@
+@page
+@using FinTrack.Data
+@using FinTrack.Models
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@inject AppStatus Status
+@inject PresenceTracker Presenca
+@inject IWebHostEnvironment Ambiente
+@functions {
+
+    public string Ambiente_Nome = "";
+    public TimeSpan Uptime;
+    public bool BancoOk;
+    public long BancoMs;
+    public List<string> MigracoesPendentes = [];
+    public int MigracoesAplicadas;
+    public int PresencasRastreadas;
+    public List<(string Usuario, string? Conector, string? Status, DateTime? UltimaSincronizacao)> UltimosSyncsPluggy = [];
+
+    // Maior que a janela de "online" do PresenceTracker (1 min) — dá folga
+    // pra não fechar uma sessão só porque o heartbeat atrasou um ciclo.
+    private static readonly TimeSpan TimeoutSessao = TimeSpan.FromMinutes(2);
+
+    public async Task OnGetAsync()
+    {
+        Ambiente_Nome = Ambiente.EnvironmentName;
+        Uptime = DateTime.UtcNow - Status.IniciadoEm;
+        PresencasRastreadas = Presenca.Rastreadas;
+
+        var cronometro = System.Diagnostics.Stopwatch.StartNew();
+        BancoOk = await Db.Database.CanConnectAsync();
+        cronometro.Stop();
+        BancoMs = cronometro.ElapsedMilliseconds;
+
+        MigracoesAplicadas = (await Db.Database.GetAppliedMigrationsAsync()).Count();
+        MigracoesPendentes = (await Db.Database.GetPendingMigrationsAsync()).ToList();
+
+        UltimosSyncsPluggy = await Db.PluggyItems
+            .Include(i => i.IdUserNavigation)
+            .OrderByDescending(i => i.UltimaSincronizacao)
+            .Take(10)
+            .Select(i => new ValueTuple<string, string?, string?, DateTime?>(
+                i.IdUserNavigation.Nome, i.NomeConector, i.Status, i.UltimaSincronizacao))
+            .ToListAsync();
+    }
+
+    /// <summary>
+    /// Só a parte que muda sozinha: quem está online e o histórico de sessão.
+    /// A tela chama isso em intervalo curto (e no botão Atualizar) em vez de
+    /// recarregar a página inteira — recarregar significava refazer as
+    /// consultas de migration e de sync a cada poucos segundos à toa.
+    /// </summary>
+    public Task<IActionResult> OnGetAtividadeAsync()
+    {
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
+        {
+            await FecharSessoesEncerradasAsync();
+
+            var online = Presenca.Online()
+                .Select(p => new
+                {
+                    usuario = p.NomeUser,
+                    caminho = p.Caminho,
+                    segundos = (int)(DateTime.UtcNow - p.UltimoPing).TotalSeconds
+                })
+                .ToList();
+
+            var sessoes = await Db.SessoesUsuario
+                .Include(s => s.IdUserNavigation)
+                .OrderByDescending(s => s.InicioEm)
+                .Take(15)
+                .Select(s => new { s.IdUserNavigation.Nome, s.InicioEm, s.FimEm, s.Motivo })
+                .ToListAsync();
+
+            return new JsonResult(new
+            {
+                online,
+                rastreadas = Presenca.Rastreadas,
+                sessoes = sessoes.Select(s => new
+                {
+                    usuario = s.Nome,
+                    inicio = Fuso.ParaLocal(s.InicioEm).ToString("dd/MM HH:mm:ss"),
+                    fim = s.FimEm is null ? null : Fuso.ParaLocal(s.FimEm.Value).ToString("dd/MM HH:mm:ss"),
+                    duracao = FormatarDuracao((s.FimEm ?? DateTime.UtcNow) - s.InicioEm),
+                    motivo = s.Motivo,
+                    emAndamento = s.FimEm is null
+                }),
+                atualizadoEm = DateTime.Now.ToString("HH:mm:ss")
+            }) { StatusCode = 200 };
+        });
+    }
+
+    private static string FormatarDuracao(TimeSpan d) =>
+        d.TotalHours >= 1 ? $"{(int)d.TotalHours}h {d.Minutes}min" : $"{d.Minutes}min {d.Seconds}s";
+
+    /// <summary>
+    /// Fechamento preguiçoso: só roda quando o painel pede atividade, sem
+    /// BackgroundService — esta página é a única leitora de SessaoUsuario.
+    /// Compara cada sessão aberta com o último ping conhecido no
+    /// PresenceTracker (que não sobrevive a restart — por isso Program.cs
+    /// fecha tudo que sobrou aberto no boot, separadamente).
+    /// </summary>
+    private async Task FecharSessoesEncerradasAsync()
+    {
+        var abertas = await Db.SessoesUsuario.Where(s => s.FimEm == null).ToListAsync();
+        var mudou = false;
+
+        foreach (var sessao in abertas)
+        {
+            var ultimoPing = Presenca.UltimoPing(sessao.Token);
+
+            if (ultimoPing is DateTime ping)
+            {
+                if (DateTime.UtcNow - ping <= TimeoutSessao) continue;
+                sessao.FimEm = ping;
+            }
+            else
+            {
+                // Nunca recebeu heartbeat. Pode ser: (a) login muito recente,
+                // o primeiro heartbeat ainda não chegou — não fecha ainda; ou
+                // (b) sessão realmente abandonada sem nenhum ping. TimeoutSessao
+                // desde o InicioEm separa os dois casos.
+                if (DateTime.UtcNow - sessao.InicioEm <= TimeoutSessao) continue;
+                sessao.FimEm = sessao.InicioEm;
+            }
+
+            sessao.Motivo = "heartbeat";
+            mudou = true;
+        }
+
+        if (mudou) await Db.SaveChangesAsync();
+    }
+}
+@{
+    ViewData["Title"] = "Dashboard";
+    ViewData["Aba"] = "dashboard";
+}
+
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card card-admin p-3 h-100">
+            <div class="text-muted small">Ambiente</div>
+            <div class="fs-4 fw-bold">@Ambiente_Nome</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-admin p-3 h-100">
+            <div class="text-muted small">Uptime</div>
+            <div class="fs-4 fw-bold">@Uptime.Days d @Uptime.Hours h @Uptime.Minutes min</div>
+            <div class="text-muted small">desde @Fuso.Curto(Status.IniciadoEm)</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-admin p-3 h-100">
+            <div class="text-muted small">Banco de dados</div>
+            <div class="fs-4 fw-bold">
+                @if (BancoOk)
+                {
+                    <span class="text-success"><i class="bi bi-check-circle"></i> OK</span>
+                    <span class="small text-muted">(@BancoMs ms)</span>
+                }
+                else
+                {
+                    <span class="text-danger"><i class="bi bi-x-circle"></i> Falhou</span>
+                }
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card card-admin p-3 h-100">
+            <div class="text-muted small">Migrations</div>
+            <div class="fs-4 fw-bold">
+                @MigracoesAplicadas aplicadas
+                @if (MigracoesPendentes.Count > 0)
+                {
+                    <span class="text-warning small d-block">@MigracoesPendentes.Count pendente(s)</span>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3">
+    <div class="col-lg-7">
+        <div class="card card-admin p-3 h-100">
+            <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+                <h2 class="fs-6 fw-semibold mb-0">
+                    <i class="bi bi-broadcast me-1"></i> Quem tá online agora
+                    <span class="badge text-bg-secondary ms-1" id="contadorOnline">—</span>
+                </h2>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="small text-muted" id="atualizadoEm"></span>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" role="switch" id="autoAtualizar" checked>
+                        <label class="form-check-label small text-muted" for="autoAtualizar">ao vivo</label>
+                    </div>
+                    <button class="btn btn-sm btn-outline-light" id="btnAtualizar" title="Atualizar agora">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-dark table-sm mb-0">
+                    <thead>
+                    <tr>
+                        <th>Usuário</th>
+                        <th>Página atual</th>
+                        <th class="text-end">Última atividade</th>
+                    </tr>
+                    </thead>
+                    <tbody id="corpoOnline">
+                    <tr><td colspan="3" class="text-muted small">Carregando…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="text-muted small mt-2">
+                Sessões rastreadas em memória: <span id="rastreadas">@PresencasRastreadas</span>
+                <span class="ms-1">(entradas paradas há mais de 30 min são descartadas sozinhas)</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="card card-admin p-3 h-100">
+            <h2 class="fs-6 fw-semibold mb-3"><i class="bi bi-arrow-repeat me-1"></i> Últimas sincronizações Pluggy</h2>
+            @if (UltimosSyncsPluggy.Count == 0)
+            {
+                <p class="text-muted small mb-0">Nenhum item Pluggy conectado.</p>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-dark table-sm mb-0">
+                        <thead>
+                        <tr>
+                            <th>Usuário</th>
+                            <th>Conector</th>
+                            <th>Status</th>
+                            <th>Última sync</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var s in UltimosSyncsPluggy)
+                        {
+                            <tr>
+                                <td>@s.Usuario</td>
+                                <td>@s.Conector</td>
+                                <td>@s.Status</td>
+                                <td>@Fuso.Curto(s.UltimaSincronizacao)</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mt-1">
+    <div class="col-12">
+        <div class="card card-admin p-3">
+            <h2 class="fs-6 fw-semibold mb-1"><i class="bi bi-clock-history me-1"></i> Sessões recentes</h2>
+            <p class="text-muted small mb-3">
+                Fim é sempre uma estimativa — "logout" é preciso (veio do botão Sair), "heartbeat" é
+                o último ping antes de parar, "restart" é o app tendo caído/reiniciado com a sessão
+                ainda aberta. Horários no fuso do servidor.
+            </p>
+
+            <div class="table-responsive">
+                <table class="table table-dark table-sm mb-0">
+                    <thead>
+                    <tr>
+                        <th>Usuário</th>
+                        <th>Início</th>
+                        <th>Fim</th>
+                        <th>Duração</th>
+                        <th>Motivo</th>
+                    </tr>
+                    </thead>
+                    <tbody id="corpoSessoes">
+                    <tr><td colspan="5" class="text-muted small">Carregando…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        (function () {
+            var timer = null;
+            var INTERVALO = 10000;
+
+            function escapar(txt) {
+                return $('<div>').text(txt == null ? '' : txt).html();
+            }
+
+            function pintar(dados) {
+                var online = dados.online || [];
+                $('#contadorOnline').text(online.length);
+                $('#rastreadas').text(dados.rastreadas);
+                $('#atualizadoEm').text('atualizado ' + dados.atualizadoEm);
+
+                $('#corpoOnline').html(online.length === 0
+                    ? '<tr><td colspan="3" class="text-muted small">Ninguém online no momento.</td></tr>'
+                    : online.map(function (p) {
+                        return '<tr><td>' + escapar(p.usuario) + '</td>' +
+                            '<td><code class="text-info">' + escapar(p.caminho) + '</code></td>' +
+                            '<td class="text-end text-muted">' + p.segundos + 's atrás</td></tr>';
+                    }).join(''));
+
+                var sessoes = dados.sessoes || [];
+                $('#corpoSessoes').html(sessoes.length === 0
+                    ? '<tr><td colspan="5" class="text-muted small">Nenhuma sessão registrada ainda.</td></tr>'
+                    : sessoes.map(function (s) {
+                        var fim = s.emAndamento
+                            ? '<span class="text-success">em andamento</span>'
+                            : escapar(s.fim);
+                        return '<tr><td>' + escapar(s.usuario) + '</td>' +
+                            '<td>' + escapar(s.inicio) + '</td>' +
+                            '<td>' + fim + '</td>' +
+                            '<td>' + escapar(s.duracao) + '</td>' +
+                            '<td><span class="text-muted small">' + escapar(s.motivo || '—') + '</span></td></tr>';
+                    }).join(''));
+            }
+
+            function buscar() {
+                $.getJSON('/Admin?handler=Atividade')
+                    .done(pintar)
+                    .fail(function () {
+                        // Sessão de operador expirada ou app fora do ar: para o
+                        // timer em vez de martelar o servidor a cada 10s.
+                        $('#atualizadoEm').text('falha ao atualizar');
+                        parar();
+                        $('#autoAtualizar').prop('checked', false);
+                    });
+            }
+
+            function comecar() {
+                parar();
+                timer = setInterval(buscar, INTERVALO);
+            }
+
+            function parar() {
+                if (timer) { clearInterval(timer); timer = null; }
+            }
+
+            $('#btnAtualizar').on('click', buscar);
+            $('#autoAtualizar').on('change', function () {
+                if (this.checked) { buscar(); comecar(); } else { parar(); }
+            });
+
+            // Aba escondida não precisa de dado fresco — mesma ideia do
+            // heartbeat do app.
+            document.addEventListener('visibilitychange', function () {
+                if (document.hidden) { parar(); }
+                else if ($('#autoAtualizar').is(':checked')) { buscar(); comecar(); }
+            });
+
+            buscar();
+            comecar();
+        })();
+    </script>
+}

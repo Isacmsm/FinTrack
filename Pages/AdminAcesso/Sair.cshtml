@@ -1,0 +1,13 @@
+@page
+@functions {
+
+    public IActionResult OnGet()
+    {
+        // Só as chaves do operador — a mesma sessão do navegador pode estar
+        // logada como usuário do app (IdUser) ao mesmo tempo, e sair do
+        // /admin não pode derrubar essa sessão.
+        HttpContext.Session.Remove("IdOperador");
+        HttpContext.Session.Remove("NomeOperador");
+        return RedirectToPage("/AdminAcesso/Login");
+    }
+}

@@ -11,6 +11,11 @@
         public string Nome { get; set; } = "";
         public FaturaResumo? CicloAberto { get; set; }
         public FaturaResumo? UltimaFaturaFechada { get; set; }
+
+        /// <summary>Ciclos que ainda nem começaram, onde caem as parcelas já compradas.</summary>
+        public List<FaturaResumo> ProximasFaturas { get; set; } = [];
+
+        public decimal TotalParcelasFuturas => ProximasFaturas.Sum(f => f.ValorTotal);
     }
 
     public List<ResumoCartao> Cartoes { get; set; } = [];
@@ -30,17 +35,22 @@
             .Where(t => t.IdUser == idUser && t.ContaTipo == "CREDIT")
             .ToListAsync();
 
+        var pagamentos = await Db.PluggyFaturaPagamentos
+            .Where(p => p.IdUser == idUser)
+            .ToListAsync();
+
         // Mesmo cálculo da página Faturas — pra não voltar a mostrar números
         // diferentes numa página e noutra.
-        var faturas = FaturaCalculadora.Calcular(faturasPluggy, transacoesCartao, DateTime.Today);
+        var faturas = FaturaCalculadora.Calcular(faturasPluggy, transacoesCartao, pagamentos, DateTime.Today);
 
         Cartoes = faturas
             .GroupBy(f => f.ContaPluggyId)
             .Select(g => new ResumoCartao
             {
                 Nome = g.First().ContaNome,
-                CicloAberto = g.FirstOrDefault(f => f.Sintetizada),
-                UltimaFaturaFechada = g.Where(f => !f.Sintetizada).OrderByDescending(f => f.DataVencimento).FirstOrDefault()
+                CicloAberto = g.FirstOrDefault(f => f.Estado == EstadoFatura.Aberta),
+                UltimaFaturaFechada = g.Where(f => f.Estado == EstadoFatura.Fechada).OrderByDescending(f => f.DataVencimento).FirstOrDefault(),
+                ProximasFaturas = g.Where(f => f.Estado == EstadoFatura.Futura).OrderBy(f => f.DataVencimento).ToList()
             })
             .OrderByDescending(c => c.CicloAberto?.ValorTotal ?? c.UltimaFaturaFechada?.ValorTotal ?? 0)
             .ToList();
@@ -64,12 +74,16 @@
 
                     @if (cartao.CicloAberto is FaturaResumo aberto)
                     {
-                        <p class="text-secondary small mb-0">Ciclo atual (em aberto)</p>
+                        <p class="text-secondary small mb-0">
+                            Ciclo atual · fecha @aberto.DataFechamento.ToString("dd/MM") · vence @aberto.DataVencimento.ToString("dd/MM")
+                        </p>
                         <p class="fs-4 fw-bold text-danger mb-0">@aberto.ValorTotal.ToString("C", culturaBr)</p>
                         @if (aberto.ValorAntecipado > 0)
                         {
-                            <p class="text-success small mb-0">− @aberto.ValorAntecipado.ToString("C", culturaBr) já adiantado</p>
-                            <p class="text-secondary small mb-2">Saldo restante: @aberto.SaldoRestante.ToString("C", culturaBr)</p>
+                            <p class="text-success small mb-2">
+                                @aberto.ValorCompras.ToString("C", culturaBr) em compras −
+                                @aberto.ValorAntecipado.ToString("C", culturaBr) já adiantado
+                            </p>
                         }
                         else
                         {
@@ -82,14 +96,27 @@
                         var (textoStatus, classeStatus) = FaturaCalculadora.BadgeStatusPagamento(fechada.StatusPagamento);
                         <hr class="my-2" />
                         <p class="text-secondary small mb-0">
-                            Última fatura fechada · vence @fechada.DataVencimento!.Value.ToString("dd/MM/yyyy")
+                            Última fatura fechada · vence @fechada.DataVencimento.ToString("dd/MM/yyyy")
                         </p>
                         <p class="fw-semibold mb-1">@fechada.ValorTotal.ToString("C", culturaBr)</p>
                         <span class="badge @classeStatus">@textoStatus</span>
-                        @if (fechada.PagamentoVistoNoExtrato)
+                        @if (fechada.EmAtraso)
                         {
-                            <span class="text-secondary small">(visto no extrato)</span>
+                            <span class="badge text-bg-danger">Vencida</span>
                         }
+                        @if (fechada.StatusPagamento == "Parcialmente paga")
+                        {
+                            <span class="text-secondary small">falta @fechada.SaldoRestante.ToString("C", culturaBr)</span>
+                        }
+                    }
+
+                    @if (cartao.ProximasFaturas.Count > 0)
+                    {
+                        <hr class="my-2" />
+                        <p class="text-secondary small mb-0">
+                            Já comprometido nas próximas @cartao.ProximasFaturas.Count fatura(s)
+                        </p>
+                        <p class="fw-semibold mb-0">@cartao.TotalParcelasFuturas.ToString("C", culturaBr)</p>
                     }
                     else if (cartao.CicloAberto is null)
                     {

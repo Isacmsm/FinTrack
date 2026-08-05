@@ -4,6 +4,7 @@ using FinTrack.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace FinTrack.Migrations
 {
     [DbContext(typeof(FinTrackDbContext))]
-    partial class FinTrackDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260805054711_CriaSessaoUsuario")]
+    partial class CriaSessaoUsuario
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -332,43 +335,6 @@ namespace FinTrack.Migrations
                     b.HasIndex("IdUser");
 
                     b.ToTable("PluggyFatura", (string)null);
-                });
-
-            modelBuilder.Entity("FinTrack.Models.PluggyFaturaPagamento", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("ContaPluggyId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(100)");
-
-                    b.Property<DateTime>("Data")
-                        .HasColumnType("date");
-
-                    b.Property<int>("IdUser")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Origem")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(20)");
-
-                    b.Property<decimal>("Valor")
-                        .HasColumnType("money");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IdUser", "ContaPluggyId", "Data", "Valor")
-                        .IsUnique();
-
-                    b.ToTable("PluggyFaturaPagamento", (string)null);
                 });
 
             modelBuilder.Entity("FinTrack.Models.PluggyInvestimento", b =>
@@ -847,18 +813,6 @@ namespace FinTrack.Migrations
                     b.Navigation("IdUserNavigation");
                 });
 
-            modelBuilder.Entity("FinTrack.Models.PluggyFaturaPagamento", b =>
-                {
-                    b.HasOne("FinTrack.Models.Usuario", "IdUserNavigation")
-                        .WithMany("PluggyFaturaPagamentos")
-                        .HasForeignKey("IdUser")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("FK_PluggyFaturaPagamento_Usuario");
-
-                    b.Navigation("IdUserNavigation");
-                });
-
             modelBuilder.Entity("FinTrack.Models.PluggyInvestimento", b =>
                 {
                     b.HasOne("FinTrack.Models.Usuario", "IdUserNavigation")
@@ -963,8 +917,6 @@ namespace FinTrack.Migrations
                     b.Navigation("Orcamentos");
 
                     b.Navigation("PluggyConexao");
-
-                    b.Navigation("PluggyFaturaPagamentos");
 
                     b.Navigation("PluggyFaturas");
 

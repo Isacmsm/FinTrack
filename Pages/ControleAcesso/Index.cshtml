@@ -3,9 +3,13 @@
 @using FinTrack.Data
 @using FinTrack.Models
 @using Microsoft.AspNetCore.Identity
+@using Microsoft.AspNetCore.DataProtection
 @using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.RateLimiting
+@attribute [EnableRateLimiting("login")]
 @inject FinTrackDbContext Db
 @inject IPasswordHasher<Usuario> Hasher
+@inject IDataProtectionProvider Protecao
 @functions {
 
     public class LoginRequest
@@ -14,12 +18,6 @@
         public string Senha { get; set; } = "";
     }
 
-    private void SalvarSessao(Usuario usuario)
-    {
-        HttpContext.Session.SetInt32("IdUser", usuario.Id);
-        HttpContext.Session.SetString("NomeUser", usuario.Nome);
-        HttpContext.Session.SetString("EmailUser", usuario.Email);
-    }
 
     /// <summary>
     /// Confere a senha. Trata o caso das contas antigas, que foram gravadas em
@@ -84,8 +82,25 @@
                 await Db.SaveChangesAsync();
             }
 
-            SalvarSessao(usuario);
-            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+            // A sessão NÃO é gravada aqui. Este handler apaga o cookie de
+            // sessão e entrega um bilhete; quem estabelece a sessão é o
+            // /ControleAcesso/Entrar, que chega sem cookie e por isso ganha uma
+            // sessão nova em folha — ver Data/TicketLogin.cs. Escrever
+            // qualquer coisa na sessão aqui reemitiria o cookie antigo e
+            // desfaria a troca.
+            // Captura ANTES de descartar o cookie: se já existe uma sessão de
+            // operador neste navegador, ela tem que sobreviver à troca — as
+            // duas identidades convivem de propósito.
+            var preservada = TicketLogin.CapturarSessao(HttpContext);
+
+            TicketLogin.DescartarCookieDeSessao(HttpContext);
+            var bilhete = TicketLogin.Gerar(Protecao, TicketLogin.PropositoUsuario, usuario.Id, preservada);
+
+            return new JsonResult(new
+            {
+                sucesso = true,
+                url = $"/ControleAcesso/Entrar?t={Uri.EscapeDataString(bilhete)}"
+            }) { StatusCode = 200 };
         });
     }
 }
@@ -213,7 +228,9 @@
                 data: JSON.stringify({ email: email, senha: senha }),
                 success: function (response) {
                     if (response.sucesso) {
-                        window.location.href = '/App';
+                        // O servidor manda pra onde ir: é o passo que troca a
+                        // sessão por uma nova (ver Data/TicketLogin.cs).
+                        window.location.href = response.url;
                     }
                 },
                 error: function (xhr) {

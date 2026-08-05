@@ -1,0 +1,143 @@
+@page
+@using FinTrack.Data
+@using FinTrack.Models
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.AspNetCore.DataProtection
+@using Microsoft.AspNetCore.RateLimiting
+@using Microsoft.EntityFrameworkCore
+@attribute [EnableRateLimiting("login")]
+@inject FinTrackDbContext Db
+@inject IPasswordHasher<Operador> Hasher
+@inject IDataProtectionProvider Protecao
+@functions {
+
+    public class LoginRequest
+    {
+        public string Email { get; set; } = "";
+        public string Senha { get; set; } = "";
+    }
+
+    /// <summary>
+    /// Hash descartável, conferido quando o e-mail não existe. Sem isso o
+    /// caminho "operador é null" retorna sem passar pelo PBKDF2 e responde
+    /// visivelmente mais rápido — dá pra descobrir quais e-mails têm conta
+    /// cronometrando as respostas, mesmo com a mensagem sendo a mesma.
+    /// </summary>
+    private static readonly Operador OperadorFantasma = new() { Nome = "-", Email = "-", Senha = "-" };
+
+    private string? _hashFantasma;
+
+    private string HashFantasma =>
+        _hashFantasma ??= Hasher.HashPassword(OperadorFantasma, "senha que ninguém usa");
+
+    public Task<IActionResult> OnPostLoginAsync([FromBody] LoginRequest request)
+    {
+        return Util.ExecutarHandlerAsync(HttpContext, async () =>
+        {
+            var email = request.Email?.Trim() ?? "";
+
+            new Validador()
+                .Exigir(email.Length > 0, "email", "Informe o e-mail")
+                .Exigir(!string.IsNullOrWhiteSpace(request.Senha), "senha", "Informe a senha")
+                .LancarSeInvalido();
+
+            var operador = await Db.Operadores.FirstOrDefaultAsync(o => o.Email == email);
+
+            var confere = operador is null
+                ? Hasher.VerifyHashedPassword(OperadorFantasma, HashFantasma, request.Senha) == PasswordVerificationResult.Success
+                : Hasher.VerifyHashedPassword(operador, operador.Senha, request.Senha) != PasswordVerificationResult.Failed;
+
+            if (operador is null || !confere)
+            {
+                throw new ErroDeNegocioException("E-mail ou senha incorretos");
+            }
+
+            // Igual ao login do app: a sessão não é gravada aqui. O cookie é
+            // descartado e o /AdminAcesso/Entrar estabelece uma sessão nova —
+            // ver Data/TicketLogin.cs.
+            // Captura ANTES de descartar o cookie: entrar no painel não pode
+            // derrubar a sessão do app no mesmo navegador.
+            var preservada = TicketLogin.CapturarSessao(HttpContext);
+
+            TicketLogin.DescartarCookieDeSessao(HttpContext);
+            var bilhete = TicketLogin.Gerar(Protecao, TicketLogin.PropositoOperador, operador.Id, preservada);
+
+            return new JsonResult(new
+            {
+                sucesso = true,
+                url = $"/AdminAcesso/Entrar?t={Uri.EscapeDataString(bilhete)}"
+            }) { StatusCode = 200 };
+        });
+    }
+}
+@{
+    ViewData["Title"] = "Login Admin";
+}
+
+<div class="card-glass rounded-4 shadow-lg p-4 p-md-5 w-100" style="max-width: 26rem;">
+
+    <div class="text-center mb-4">
+        <h1 class="font-display fs-3 fw-bold text-dark mb-0">FinTrack Admin</h1>
+        <p class="text-secondary small mt-1 mb-0">Painel de operação — acesso restrito</p>
+    </div>
+
+    <div id="formLogin">
+        @Html.AntiForgeryToken()
+
+        <div class="mb-3">
+            <label for="email" class="form-label small fw-medium text-dark">E-mail</label>
+            <input type="email" id="email" name="email" class="form-control form-control-lg"/>
+            <span class="erro-input text-danger small d-none" id="erroEmail"></span>
+        </div>
+
+        <div class="mb-3">
+            <label for="senha" class="form-label small fw-medium text-dark">Senha</label>
+            <input type="password" id="senha" name="senha" class="form-control form-control-lg"/>
+            <span class="erro-input text-danger small d-none" id="erroSenha"></span>
+        </div>
+
+        <div class="alert alert-danger py-2 px-3 small d-none" id="erroGeral"></div>
+
+        <button type="button" class="btn btn-admin w-100 fw-semibold py-3" id="btnLogin" onclick="fazerLogin()">
+            Entrar
+        </button>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        function fazerLogin() {
+            limparErros();
+
+            const email = $('#email').val();
+            const senha = $('#senha').val();
+
+            $('#btnLogin').prop('disabled', true).text('Entrando...');
+
+            $.ajax({
+                url: '/AdminAcesso/Login?handler=Login',
+                type: 'POST',
+                contentType: 'application/json',
+                headers: {
+                    'RequestVerificationToken': $('input[name="__RequestVerificationToken"]').val()
+                },
+                data: JSON.stringify({ email: email, senha: senha }),
+                success: function (response) {
+                    if (response.sucesso) {
+                        // O servidor diz pra onde ir: é o passo que troca a
+                        // sessão por uma nova (ver Data/TicketLogin.cs).
+                        window.location.href = response.url;
+                    }
+                },
+                error: function (xhr) {
+                    $('#btnLogin').prop('disabled', false).text('Entrar');
+                    mostrarErros(xhr);
+                }
+            });
+        }
+
+        $(document).on('keypress', '#email, #senha', function (e) {
+            if (e.which === 13) fazerLogin();
+        });
+    </script>
+}

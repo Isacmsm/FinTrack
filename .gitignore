@@ -10,6 +10,7 @@ obj/
 # Configurações sensíveis
 appsettings.Development.json
 keys/
+logs/
 .env
 
 # Node / Tailwind

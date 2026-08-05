@@ -1,0 +1,28 @@
+@page
+@using FinTrack.Data
+@inject PresenceTracker Presenca
+@functions {
+
+    public class HeartbeatRequest
+    {
+        public string Caminho { get; set; } = "";
+    }
+
+    public IActionResult OnPostAsync([FromBody] HeartbeatRequest request)
+    {
+        return Util.ExecutarHandler(HttpContext, () =>
+        {
+            var idUser = HttpContext.Session.GetInt32("IdUser")!.Value;
+            var nomeUser = HttpContext.Session.GetString("NomeUser") ?? "";
+            // Nunca do corpo da requisição — só da sessão do servidor, senão
+            // o cliente forjaria qualquer token e apareceria como "online"
+            // no lugar de outra sessão no painel /admin.
+            var token = HttpContext.Session.GetString("TokenSessao");
+
+            if (token is not null)
+                Presenca.RegistrarAtividade(token, idUser, nomeUser, request.Caminho);
+
+            return new JsonResult(new { sucesso = true }) { StatusCode = 200 };
+        });
+    }
+}

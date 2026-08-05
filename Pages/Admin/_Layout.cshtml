@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>@ViewData["Title"] - FinTrack Admin</title>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"/>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bs-primary: #6366f1;
+            --bs-primary-rgb: 99, 102, 241;
+            --bs-body-font-family: 'Plus Jakarta Sans', sans-serif;
+            --bs-body-bg: #0f172a;
+            --bs-border-radius: .75rem;
+        }
+
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        h1, h2, h3, .font-display { font-family: 'Outfit', sans-serif; }
+
+        .admin-header {
+            background: linear-gradient(90deg, #0f172a 0%, #312e81 100%);
+            border-bottom: 1px solid rgba(255, 255, 255, .08);
+        }
+
+        .admin-nav .nav-link {
+            color: #cbd5e1;
+            font-size: .875rem;
+            font-weight: 500;
+        }
+
+        .admin-nav .nav-link.active {
+            color: #fff;
+            background: rgba(255, 255, 255, .08) !important;
+            border-radius: .5rem;
+        }
+
+        .card-admin {
+            background: #1e293b;
+            color: #e2e8f0;
+            border: 1px solid rgba(255, 255, 255, .06);
+        }
+
+        .card-admin .text-muted { color: #94a3b8 !important; }
+
+        pre.log-viewer {
+            background: #0b1120;
+            color: #cbd5e1;
+            font-size: .8rem;
+            max-height: 60vh;
+            overflow: auto;
+            padding: 1rem;
+            border-radius: .5rem;
+            white-space: pre;
+            tab-size: 2;
+        }
+
+        /* Só o log da aplicação quebra linha: ali a linha é texto corrido e
+           quebrar ajuda. No JSON identado quebrar destrói a identação, que é
+           justamente o que torna o dado bruto legível. */
+        pre.log-viewer.texto-corrido {
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        details.evento > summary::-webkit-details-marker { display: none; }
+        details.evento > summary { list-style: none; }
+        details.evento[open] > summary { border-bottom: 1px solid rgba(255, 255, 255, .06); }
+        details.evento:hover { border-color: rgba(255, 255, 255, .2) !important; }
+
+        .form-check-input:checked { background-color: var(--bs-primary); border-color: var(--bs-primary); }
+    </style>
+</head>
+<body class="bg-dark">
+
+<header class="admin-header d-flex align-items-center justify-content-between px-4" style="height: 4rem;">
+    <a href="/Admin" class="text-decoration-none d-flex align-items-center gap-2">
+        <span class="fs-5 fw-bold text-white">FinTrack <span class="text-info">Admin</span></span>
+    </a>
+    <div class="d-flex align-items-center gap-3">
+        <span class="small text-white-50">@Context.Session.GetString("NomeOperador")</span>
+        <a href="/AdminAcesso/Sair" class="btn btn-sm btn-outline-light">Sair</a>
+    </div>
+</header>
+
+<nav class="admin-nav bg-black bg-opacity-25 px-4 py-2 d-flex gap-2">
+    <a class="nav-link px-3 py-2 @(ViewData["Aba"] as string == "dashboard" ? "active" : "")" href="/Admin">
+        <i class="bi bi-speedometer2 me-1"></i> Dashboard
+    </a>
+    <a class="nav-link px-3 py-2 @(ViewData["Aba"] as string == "logs" ? "active" : "")" href="/Admin/Logs">
+        <i class="bi bi-file-text me-1"></i> Log da aplicação
+    </a>
+    <a class="nav-link px-3 py-2 @(ViewData["Aba"] as string == "pluggy" ? "active" : "")" href="/Admin/Pluggy">
+        <i class="bi bi-bank me-1"></i> Pluggy
+    </a>
+</nav>
+
+<main class="p-4">
+    @RenderBody()
+</main>
+
+<script src="~/lib/jquery/dist/jquery.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"></script>
+@await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

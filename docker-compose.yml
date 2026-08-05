@@ -21,9 +21,23 @@ services:
     restart: unless-stopped
     environment:
       ASPNETCORE_ENVIRONMENT: Production
+      # Sem isso o container roda em UTC e DateTime.Today/Now ficam 3h à
+      # frente do horário de Brasília: entre 21h e a meia-noite o app já
+      # considera que é o dia seguinte, e no último dia do mês o dashboard e
+      # os filtros de Transações/Orçamento viram pro mês novo antes da hora.
+      # Instante gravado continua sendo UTC (DateTime.UtcNow) e é convertido
+      # na exibição por Data/Fuso.cs.
+      TZ: America/Sao_Paulo
       ConnectionStrings__FinTrack: "Server=sqlserver;Database=FinTrack;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True;"
+      # Bootstrap do primeiro Operador (login do painel /admin) — só roda
+      # uma vez, quando a tabela Operador ainda está vazia (ver Program.cs).
+      Admin__Email: "${ADMIN_EMAIL}"
+      Admin__SenhaInicial: "${ADMIN_SENHA_INICIAL}"
     volumes:
       - appkeys:/app/keys
+      # Mesmo motivo do appkeys: sem volume nomeado, os logs em disco (com
+      # retenção de 15 dias) somem a cada "docker compose build app && up".
+      - applogs:/app/logs
     depends_on:
       sqlserver:
         condition: service_healthy
@@ -44,5 +58,6 @@ services:
 volumes:
   sqldata:
   appkeys:
+  applogs:
   caddy_data:
   caddy_config:

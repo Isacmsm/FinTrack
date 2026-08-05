@@ -32,4 +32,8 @@ public partial class Usuario
     public virtual ICollection<Orcamento> Orcamentos { get; set; } = new List<Orcamento>();
 
     public virtual ICollection<MetaInvestimento> Metas { get; set; } = new List<MetaInvestimento>();
+
+    public virtual ICollection<SessaoUsuario> Sessoes { get; set; } = new List<SessaoUsuario>();
+
+    public virtual ICollection<PluggyFaturaPagamento> PluggyFaturaPagamentos { get; set; } = new List<PluggyFaturaPagamento>();
 }

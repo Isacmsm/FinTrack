@@ -30,20 +30,20 @@ public partial class PluggyFatura
     public decimal? ValorMinimo { get; set; }
 
     /// <summary>
-    /// Soma de bill.payments — pode vir sempre zero mesmo pra fatura paga de
-    /// verdade, porque o campo não aparece em nenhum exemplo da documentação
-    /// da Pluggy pra esse tipo de conector. Por isso "Paga" não vira uma
-    /// afirmação — ver <see cref="StatusPagamento"/>.
+    /// Soma crua de <c>bill.payments[]</c>, guardada só como registro do que a
+    /// API devolveu. <b>Não é "o quanto esta fatura foi paga"</b>: a Pluggy põe
+    /// em payments todo pagamento que caiu na janela da fatura, inclusive o que
+    /// quitou a anterior e o que adiantou a seguinte — daí sair maior que
+    /// <see cref="ValorTotal"/> em 4 das 6 faturas reais que testei.
+    ///
+    /// Quem responde "esta fatura foi paga?" é a
+    /// <see cref="FinTrack.Data.FaturaCalculadora"/>, a partir de
+    /// <see cref="PluggyFaturaPagamento"/>.
     /// </summary>
     public decimal ValorPago { get; set; }
 
+    /// <inheritdoc cref="ValorPago"/>
     public DateTime? DataUltimoPagamento { get; set; }
-
-    public string StatusPagamento => ValorPago >= ValorTotal - 0.02m && ValorTotal > 0
-        ? "Paga"
-        : ValorPago > 0
-            ? "Parcialmente paga"
-            : "Sem confirmação de pagamento";
 
     public virtual Usuario IdUserNavigation { get; set; } = null!;
 }

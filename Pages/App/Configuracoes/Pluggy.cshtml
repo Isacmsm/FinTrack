@@ -4,9 +4,11 @@
 @using FinTrack.Data
 @using FinTrack.Models
 @using Microsoft.EntityFrameworkCore
+@using System.Text.Json
 @inject FinTrackDbContext Db
 @inject IDataProtectionProvider DataProtectionProvider
 @inject PluggyApiClient PluggyApi
+@inject PluggyLogSessao LogPluggy
 @functions {
 
     private const string PropositoProtecao = "Pluggy.Credenciais";
@@ -16,6 +18,14 @@
     private const int IdCategoriaInvestimentoResgate = 17;
     private const int IdCategoriaPagamentoFatura = 18;
     private const int IdCategoriaRecebimentoFatura = 19;
+
+    /// <summary>
+    /// "Credit card payment" na taxonomia da Pluggy. Vale mais que o
+    /// MapaMovimentacaoInterna abaixo, que casa a descrição em português que a
+    /// Nubank usa ("Pagamento recebido") — outro banco escreve outra coisa, o
+    /// categoryId é o mesmo pra todos.
+    /// </summary>
+    private const string PluggyCategoriaIdPagamentoCartao = "05100000";
 
     /// <summary>
     /// Palavras-chave conhecidas na descrição -> categoria real do FinTrack.
@@ -66,6 +76,23 @@
         ["Pagamento de fatura"] = (IdCategoriaPagamentoFatura, IdCategoriaRecebimentoFatura),
         ["Pagamento recebido"] = (IdCategoriaPagamentoFatura, IdCategoriaRecebimentoFatura)
     };
+
+    /// <summary>
+    /// Dinheiro entrando num cartão de crédito é pagamento de fatura ou
+    /// estorno de compra, e as duas coisas não podem ser confundidas: o
+    /// pagamento quita fatura, o estorno abate compra. O categoryId da Pluggy
+    /// separa os dois sem depender da descrição; a descrição fica só como
+    /// segunda opção, pra conector que não categorize.
+    /// </summary>
+    private static bool EhPagamentoDeFatura(PluggyAccountDto conta, PluggyTransactionDto t)
+    {
+        if (conta.Type != "CREDIT" || t.Type != "CREDIT") return false;
+
+        return t.CategoryId == PluggyCategoriaIdPagamentoCartao
+               || (t.Description is { Length: > 0 } d
+                   && MapaMovimentacaoInterna.TryGetValue(d, out var par)
+                   && par.Receita == IdCategoriaRecebimentoFatura);
+    }
 
     public bool TemConexao { get; set; }
     public List<PluggyItem> Items { get; set; } = [];
@@ -311,9 +338,60 @@
     /// cada sincronização — evita perder silenciosamente uma transação que a
     /// Pluggy ainda não tinha capturado da última vez.
     /// </summary>
+    /// <summary>
+    /// Grava os pagamentos de fatura da conta, deduplicados por (data, valor)
+    /// — a chave natural, já que a Pluggy não dá id estável pra pagamento.
+    /// Append-only: pagamento não some depois de acontecer, e nada aqui
+    /// sobrescreve o que já foi gravado.
+    /// </summary>
+    private async Task SalvarPagamentosDeFaturaAsync(
+        int idUser,
+        string contaPluggyId,
+        List<(DateTime Data, decimal Valor, string Origem)> pagamentos,
+        PluggyLogSessao logPluggy)
+    {
+        if (pagamentos.Count == 0) return;
+
+        var jaGravados = await Db.PluggyFaturaPagamentos
+            .Where(p => p.IdUser == idUser && p.ContaPluggyId == contaPluggyId)
+            .Select(p => new { p.Data, p.Valor })
+            .ToListAsync();
+
+        var chaves = jaGravados.Select(p => (p.Data, p.Valor)).ToHashSet();
+        var novos = new List<PluggyFaturaPagamento>();
+
+        foreach (var pagamento in pagamentos.OrderBy(p => p.Data).ThenBy(p => p.Valor))
+        {
+            if (pagamento.Valor <= 0) continue;
+            if (!chaves.Add((pagamento.Data, pagamento.Valor))) continue;
+
+            novos.Add(new PluggyFaturaPagamento
+            {
+                IdUser = idUser,
+                ContaPluggyId = contaPluggyId,
+                Data = pagamento.Data,
+                Valor = pagamento.Valor,
+                Origem = pagamento.Origem
+            });
+        }
+
+        if (novos.Count == 0) return;
+
+        Db.PluggyFaturaPagamentos.AddRange(novos);
+
+        logPluggy.Registrar("SALVO", $"{novos.Count} pagamento(s) de fatura", contaPluggyId,
+            JsonSerializer.Serialize(novos.Select(p => new { p.Data, p.Valor, p.Origem })),
+            "Deduplicados por (data, valor) contra o que já estava gravado. De bills[].payments[] o id, o " +
+            "valueType e o paymentMode são descartados (ver BRUTO GET /bills): o id não é estável entre " +
+            "faturas e os outros dois não mudam nenhuma conta.");
+    }
+
     private async Task<IActionResult> ImportarTransacoesAsync(int pluggyItemId, bool solicitarAtualizacao)
     {
         var idUser = IdUserAtual;
+        // Abre (e trunca) o arquivo deste usuário: cada sincronização
+        // substitui a anterior — ver Data/PluggyLogSessao.cs.
+        LogPluggy.Iniciar(idUser, HttpContext.Session.GetString("NomeUser") ?? $"usuário {idUser}");
 
         var conexao = await Db.PluggyConexoes.FirstOrDefaultAsync(c => c.IdUser == idUser);
         if (conexao is null) throw new ErroDeNegocioException("Conecte sua conta do Meu Pluggy antes de sincronizar");
@@ -333,6 +411,12 @@
         var contas = await PluggyApi.ListarContasAsync(apiKey, item.ItemId);
         item.NomeConector = NomeParaExibicao(contas, itemAtualizado);
         item.IconeUrl = await IconeParaExibicaoAsync(apiKey, item.NomeConector, itemAtualizado?.Connector?.ImageUrl);
+
+        LogPluggy.Registrar("SALVO", "Item", item.ItemId,
+            JsonSerializer.Serialize(new { item.Status, item.NomeConector, item.IconeUrl }),
+            "O resto do Item (executionStatus, connector completo) e das contas (saldo, subtype, currencyCode, " +
+            "número — ver BRUTO GET /accounts pra essa lista) não é persistido em lugar nenhum; só Id/Name/Type " +
+            "de cada conta viram ContaPluggyId/ContaNome/ContaTipo dentro de cada Transacao/PluggyFatura.");
 
         var dataDe = DateTime.Today.AddDays(-90);
         var novasTransacoes = 0;
@@ -356,6 +440,14 @@
 
         foreach (var conta in contas)
         {
+            // Pagamentos de fatura, juntando as duas fontes que a Pluggy tem
+            // (bills[].payments[] e as transações do extrato do cartão) e
+            // deduplicando pela chave natural — nenhuma das duas é confiável
+            // sozinha: a Pluggy repete o mesmo pagamento com ids diferentes
+            // entre faturas, e repete de novo no extrato. Ver
+            // Models/PluggyFaturaPagamento.cs.
+            var pagamentosDaConta = new List<(DateTime Data, decimal Valor, string Origem)>();
+
             if (conta.Type == "CREDIT")
             {
                 var faturasPluggy = await PluggyApi.ListarFaturasAsync(apiKey, conta.Id);
@@ -366,11 +458,21 @@
 
                 foreach (var faturaPluggy in faturasPluggy)
                 {
+                    // Sem vínculo com esta fatura de propósito: payments[] de
+                    // uma fatura lista todo pagamento que caiu na janela dela,
+                    // inclusive o que quitou a anterior e o que adiantou a
+                    // seguinte (por isso a soma abaixo passa do total da
+                    // fatura em 4 das 6 faturas reais que testei). Quem casa
+                    // pagamento com fatura é a FaturaCalculadora, pelas datas.
+                    foreach (var p in faturaPluggy.Payments ?? [])
+                        pagamentosDaConta.Add((p.PaymentDate.Date, Math.Abs(p.Amount), "bill"));
+
                     var valorPago = faturaPluggy.Payments?.Sum(p => p.Amount) ?? 0;
                     var dataUltimoPagamento = faturaPluggy.Payments?.Count > 0
                         ? faturaPluggy.Payments.Max(p => p.PaymentDate)
                         : (DateTime?)null;
 
+                    PluggyFatura faturaSalva;
                     if (faturasExistentesPorId.TryGetValue(faturaPluggy.Id, out var faturaExistente))
                     {
                         faturaExistente.ContaNome = conta.Name;
@@ -380,10 +482,11 @@
                         faturaExistente.ValorMinimo = faturaPluggy.MinimumPaymentAmount;
                         faturaExistente.ValorPago = valorPago;
                         faturaExistente.DataUltimoPagamento = dataUltimoPagamento;
+                        faturaSalva = faturaExistente;
                     }
                     else
                     {
-                        Db.PluggyFaturas.Add(new PluggyFatura
+                        faturaSalva = new PluggyFatura
                         {
                             IdUser = idUser,
                             BillId = faturaPluggy.Id,
@@ -395,8 +498,30 @@
                             ValorMinimo = faturaPluggy.MinimumPaymentAmount,
                             ValorPago = valorPago,
                             DataUltimoPagamento = dataUltimoPagamento
-                        });
+                        };
+                        Db.PluggyFaturas.Add(faturaSalva);
                     }
+
+                    // Projeção, não a entidade: faturaExistente vem de uma query rastreada pelo EF, e o
+                    // change tracker faz fixup de navegação (IdUserNavigation etc.) sozinho sempre que
+                    // outro Usuario/Categoria já foi materializado neste mesmo DbContext — serializar a
+                    // entidade direto arrisca ciclo (JsonException) e derrubaria o Buscar inteiro.
+                    LogPluggy.Registrar("SALVO", "fatura", faturaPluggy.Id,
+                        JsonSerializer.Serialize(new
+                        {
+                            faturaSalva.BillId,
+                            faturaSalva.ContaPluggyId,
+                            faturaSalva.ContaNome,
+                            faturaSalva.DataVencimento,
+                            faturaSalva.DataFechamento,
+                            faturaSalva.ValorTotal,
+                            faturaSalva.ValorMinimo,
+                            faturaSalva.ValorPago,
+                            faturaSalva.DataUltimoPagamento
+                        }),
+                        "allowsInstallments (do BRUTO GET /bills) não tem coluna e não é salvo. ValorPago é a soma crua " +
+                        "de payments[] e NÃO é status de pagamento — quem casa pagamento com fatura é a FaturaCalculadora, " +
+                        "a partir de PluggyFaturaPagamento.");
                 }
             }
 
@@ -411,6 +536,12 @@
 
             foreach (var t in transacoesPluggy)
             {
+                // Antes do desvio entre update e insert: o pagamento tem que
+                // ser coletado mesmo quando a transação já existe localmente,
+                // senão só a primeira importação enxergaria os pagamentos.
+                if (EhPagamentoDeFatura(conta, t))
+                    pagamentosDaConta.Add((t.Date.Date, Math.Abs(t.AmountInAccountCurrency ?? t.Amount), "extrato"));
+
                 if (existentesPorId.TryGetValue(t.Id, out var existente))
                 {
                     // Já importada — só atualiza os campos vindos da Pluggy
@@ -430,6 +561,48 @@
                     existente.PluggyDataCompra = t.CreditCardMetadata?.PurchaseDate;
                     existente.MoedaOriginalCodigo = t.AmountInAccountCurrency.HasValue ? t.CurrencyCode : null;
                     existente.ValorMoedaOriginal = t.AmountInAccountCurrency.HasValue ? Math.Abs(t.Amount) : null;
+
+                    // Único caso em que o Valor de uma transação já importada é
+                    // reescrito. Compra internacional tem dois valores: Amount
+                    // na moeda original (ex.: 21.57 USD) e AmountInAccountCurrency
+                    // no que saiu do cartão (114.95 BRL). Importações antigas
+                    // gravaram o primeiro, e como reimportação não mexe em Valor
+                    // (o usuário pode ter ajustado à mão), a linha ficaria errada
+                    // pra sempre — e some das faturas quase 100% do valor dela.
+                    // Só reescreve quando o Valor gravado é exatamente o número
+                    // na moeda estrangeira, que é assinatura do bug e não algo
+                    // que alguém digitaria por acaso.
+                    if (t.AmountInAccountCurrency is decimal valorNaConta
+                        && existente.Valor == Math.Abs(t.Amount)
+                        && existente.Valor != Math.Abs(valorNaConta))
+                    {
+                        existente.Valor = Math.Abs(valorNaConta);
+                    }
+
+                    // Projeção dos campos tocados, não a entidade "existente" — ela vem de uma query
+                    // rastreada (Db.Transacoes acima), e o EF pode ter feito fixup de navegação com
+                    // Categoria/Usuario já materializados neste DbContext; serializar a entidade arrisca
+                    // ciclo (Transacao → Categoria → Transacoes[] → Transacao) e derrubaria o Buscar.
+                    LogPluggy.Registrar("SALVO", "transação (já existia)", t.Id,
+                        JsonSerializer.Serialize(new
+                        {
+                            existente.MerchantNome,
+                            existente.MerchantCnpj,
+                            existente.ContaPluggyId,
+                            existente.ContaNome,
+                            existente.ContaTipo,
+                            existente.PluggyBillId,
+                            existente.PluggyFaturaPrevista,
+                            existente.PluggyParcelaAtual,
+                            existente.PluggyParcelaTotal,
+                            existente.PluggyValorCompraTotal,
+                            existente.PluggyDataCompra,
+                            existente.MoedaOriginalCodigo,
+                            existente.ValorMoedaOriginal
+                        }),
+                        "Valor/Data/IdCategoria/Desc ficaram como o usuário deixou; só os campos vindos da Pluggy foram " +
+                        "atualizados. Única exceção: compra internacional gravada com o valor em moeda estrangeira é " +
+                        "corrigida pro valor em BRL.");
                     continue;
                 }
 
@@ -437,7 +610,9 @@
                 var descricao = t.Description ?? "";
 
                 int idCategoria;
-                if (!string.IsNullOrWhiteSpace(descricao) && MapaMovimentacaoInterna.TryGetValue(descricao, out var par))
+                if (EhPagamentoDeFatura(conta, t))
+                    idCategoria = IdCategoriaRecebimentoFatura;
+                else if (!string.IsNullOrWhiteSpace(descricao) && MapaMovimentacaoInterna.TryGetValue(descricao, out var par))
                     idCategoria = receita ? par.Receita : par.Despesa;
                 else if (categoriaPorChaveComercio.TryGetValue(ComercioHelper.ChaveComercio(t.Merchant?.Name, descricao), out var idPorComercio))
                     idCategoria = idPorComercio;
@@ -446,7 +621,7 @@
                 else
                     idCategoria = receita ? IdCategoriaOutrasReceitas : IdCategoriaOutrasDespesas;
 
-                Db.Transacoes.Add(new Transacao
+                var novaTransacao = new Transacao
                 {
                     IdUser = idUser,
                     Desc = string.IsNullOrWhiteSpace(t.Description) ? conta.Name : t.Description,
@@ -472,9 +647,42 @@
                     PluggyDataCompra = t.CreditCardMetadata?.PurchaseDate,
                     MoedaOriginalCodigo = t.AmountInAccountCurrency.HasValue ? t.CurrencyCode : null,
                     ValorMoedaOriginal = t.AmountInAccountCurrency.HasValue ? Math.Abs(t.Amount) : null
-                });
+                };
+                Db.Transacoes.Add(novaTransacao);
                 novasTransacoes++;
+
+                // Projeção, não a entidade — mesmo motivo do bloco de update acima: depois do Add,
+                // o change tracker do EF pode ligar IdCategoriaNavigation/IdUserNavigation a qualquer
+                // Categoria/Usuario já materializado neste DbContext, arriscando ciclo na serialização.
+                LogPluggy.Registrar("SALVO", "transação (nova)", t.Id,
+                    JsonSerializer.Serialize(new
+                    {
+                        novaTransacao.Desc,
+                        novaTransacao.Valor,
+                        novaTransacao.Data,
+                        novaTransacao.IdCategoria,
+                        novaTransacao.PluggyTransactionId,
+                        novaTransacao.PluggyCategoria,
+                        novaTransacao.PluggyCategoriaId,
+                        novaTransacao.MerchantNome,
+                        novaTransacao.MerchantCnpj,
+                        novaTransacao.ContaPluggyId,
+                        novaTransacao.ContaNome,
+                        novaTransacao.ContaTipo,
+                        novaTransacao.PluggyBillId,
+                        novaTransacao.PluggyFaturaPrevista,
+                        novaTransacao.PluggyParcelaAtual,
+                        novaTransacao.PluggyParcelaTotal,
+                        novaTransacao.PluggyValorCompraTotal,
+                        novaTransacao.PluggyDataCompra,
+                        novaTransacao.MoedaOriginalCodigo,
+                        novaTransacao.ValorMoedaOriginal
+                    }),
+                    "Tudo que a Pluggy trouxe pra esta transação e não aparece aqui foi descartado — ver o BRUTO " +
+                    "GET /v2/transactions com o mesmo id.");
             }
+
+            await SalvarPagamentosDeFaturaAsync(idUser, conta.Id, pagamentosDaConta, LogPluggy);
         }
 
         var investimentosPluggy = await PluggyApi.ListarInvestimentosAsync(apiKey, item.ItemId);
@@ -485,6 +693,7 @@
 
         foreach (var inv in investimentosPluggy)
         {
+            PluggyInvestimento investimentoSalvo;
             if (investimentosExistentesPorId.TryGetValue(inv.Id, out var invExistente))
             {
                 invExistente.NomeConector = item.NomeConector;
@@ -508,10 +717,11 @@
                 invExistente.TaxaAnualFixa = inv.FixedAnnualRate;
                 invExistente.Emissor = inv.Issuer;
                 invExistente.Status = inv.Status;
+                investimentoSalvo = invExistente;
             }
             else
             {
-                Db.PluggyInvestimentos.Add(new PluggyInvestimento
+                investimentoSalvo = new PluggyInvestimento
                 {
                     IdUser = idUser,
                     InvestmentId = inv.Id,
@@ -536,12 +746,52 @@
                     TaxaAnualFixa = inv.FixedAnnualRate,
                     Emissor = inv.Issuer,
                     Status = inv.Status
-                });
+                };
+                Db.PluggyInvestimentos.Add(investimentoSalvo);
             }
+
+            // Projeção, não a entidade — mesmo motivo dos blocos acima: invExistente vem de uma
+            // query rastreada (Db.PluggyInvestimentos acima), sujeita a fixup de navegação do EF.
+            LogPluggy.Registrar("SALVO", "investimento", inv.Id,
+                JsonSerializer.Serialize(new
+                {
+                    investimentoSalvo.InvestmentId,
+                    investimentoSalvo.NomeConector,
+                    investimentoSalvo.Tipo,
+                    investimentoSalvo.Subtipo,
+                    investimentoSalvo.Nome,
+                    investimentoSalvo.Codigo,
+                    investimentoSalvo.Isin,
+                    investimentoSalvo.Saldo,
+                    investimentoSalvo.ValorOriginal,
+                    investimentoSalvo.LucroInformado,
+                    investimentoSalvo.ValorDisponivelResgate,
+                    investimentoSalvo.Quantidade,
+                    investimentoSalvo.ValorCota,
+                    investimentoSalvo.MoedaCodigo,
+                    investimentoSalvo.Data,
+                    investimentoSalvo.DataVencimento,
+                    investimentoSalvo.DataAplicacao,
+                    investimentoSalvo.Taxa,
+                    investimentoSalvo.TipoTaxa,
+                    investimentoSalvo.TaxaAnualFixa,
+                    investimentoSalvo.Emissor,
+                    investimentoSalvo.Status
+                }),
+                "Comparar com o BRUTO GET /investments de mesmo id pra ver o que a Pluggy trouxe e não é persistido.");
         }
 
         item.UltimaSincronizacao = DateTime.UtcNow;
         await Db.SaveChangesAsync();
+
+        // Fecha o arquivo do usuário. Se a importação estourar antes daqui, o
+        // Dispose do serviço scoped fecha na saída da requisição e o que já foi
+        // escrito continua legível no painel — que é justamente quando alguém
+        // vai querer ler.
+        LogPluggy.Registrar("FIM", "sincronização", item.ItemId,
+            JsonSerializer.Serialize(new { novasTransacoes, investimentosSincronizados = investimentosPluggy.Count }),
+            "Fim da sincronização.");
+        LogPluggy.Finalizar();
 
         return new JsonResult(new { sucesso = true, novasTransacoes, atualizacaoSolicitada, investimentosSincronizados = investimentosPluggy.Count }) { StatusCode = 200 };
     }
@@ -633,7 +883,8 @@
                         <div class="fw-medium">@(item.NomeConector ?? "Banco conectado")</div>
                         <div class="text-secondary small">
                             Status: @(item.Status ?? "—") ·
-                            Última sincronização: @(item.UltimaSincronizacao?.ToString("dd/MM/yyyy HH:mm") ?? "nunca")
+                            @* Gravado em UTC (DateTime.UtcNow logo acima), exibido no fuso local — ver Data/Fuso.cs. *@
+                            Última sincronização: @(Fuso.ParaLocal(item.UltimaSincronizacao)?.ToString("dd/MM/yyyy HH:mm") ?? "nunca")
                         </div>
                     </div>
                 </div>

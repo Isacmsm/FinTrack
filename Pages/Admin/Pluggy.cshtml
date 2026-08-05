@@ -1,0 +1,247 @@
+@page
+@using FinTrack.Data
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@inject LogFileStore Arquivos
+@functions {
+
+    public record UsuarioComLog(int IdUser, string Nome, DateTime ModificadoEm, long Bytes);
+
+    public List<UsuarioComLog> Usuarios = [];
+    public int? IdSelecionado;
+    public List<CabecalhoPluggy> Eventos = [];
+
+    public async Task OnGetAsync(int? u)
+    {
+        var arquivos = Arquivos.UsuariosComLogPluggy();
+        if (arquivos.Count == 0) return;
+
+        var ids = arquivos.Select(a => a.IdUser).ToList();
+        var nomes = await Db.Usuarios
+            .Where(x => ids.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, x => x.Nome);
+
+        Usuarios = arquivos
+            .Select(a => new UsuarioComLog(
+                a.IdUser,
+                nomes.TryGetValue(a.IdUser, out var nome) ? nome : $"usuário {a.IdUser} (removido)",
+                a.ModificadoEm,
+                a.Bytes))
+            .ToList();
+
+        // Sem escolha explícita, mostra o log mais recente — que é o que
+        // quase sempre se quer olhar depois de alguém reclamar de importação.
+        IdSelecionado = u is int pedido && Usuarios.Any(x => x.IdUser == pedido)
+            ? pedido
+            : Usuarios[0].IdUser;
+
+        Eventos = Arquivos.CabecalhosPluggy(IdSelecionado.Value).ToList();
+    }
+
+    /// <summary>
+    /// Conteúdo de um evento, buscado só quando alguém abre o bloco. O id do
+    /// usuário e o índice são inteiros — não viram caminho de arquivo.
+    /// </summary>
+    public IActionResult OnGetEvento(int u, int i)
+    {
+        var conteudo = Arquivos.ConteudoPluggy(u, i);
+        return conteudo is null
+            ? new JsonResult(new { mensagem = "Evento não encontrado" }) { StatusCode = 400 }
+            : new ContentResult { Content = conteudo, ContentType = "application/json" };
+    }
+
+    /// <summary>Arquivo inteiro pra download — o "copiar tudo" de 1 MB não cabe bem na área de transferência.</summary>
+    public IActionResult OnGetBaixar(int u)
+    {
+        var conteudo = Arquivos.LerPluggyBruto(u);
+        if (conteudo.Length == 0) return new NotFoundResult();
+
+        return File(System.Text.Encoding.UTF8.GetBytes(conteudo), "application/x-ndjson", $"pluggy-usuario-{u}.ndjson");
+    }
+
+    private static string ClasseDoTipo(string tipo) => tipo switch
+    {
+        "BRUTO" => "text-bg-warning",
+        "SALVO" => "text-bg-success",
+        _ => "text-bg-secondary"
+    };
+
+    private static string Tamanho(int bytes) =>
+        bytes >= 1024 * 1024 ? $"{bytes / 1024d / 1024d:N1} MB"
+        : bytes >= 1024 ? $"{bytes / 1024d:N0} KB"
+        : $"{bytes} B";
+}
+@{
+    ViewData["Title"] = "Pluggy";
+    ViewData["Aba"] = "pluggy";
+}
+
+<div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-3">
+    <div>
+        <h1 class="fs-4 fw-bold text-white mb-0">Dados da Pluggy</h1>
+        <p class="text-white small mb-0" style="max-width: 60rem;">
+            <strong class="text-warning">Dado bancário real.</strong>
+            Guarda só a <strong>última</strong> sincronização de cada usuário — a busca nova apaga a anterior,
+            e nada disso passa pelo log da aplicação nem fica em memória.
+            Cada busca grava pares <span class="badge text-bg-warning">BRUTO</span> (o que a Pluggy devolveu,
+            antes de qualquer filtro) e <span class="badge text-bg-success">SALVO</span> (o que virou registro
+            local), com a mesma chave — o que aparece num e não no outro foi lido e descartado.
+        </p>
+    </div>
+</div>
+
+@if (Usuarios.Count == 0)
+{
+    <div class="card card-admin p-4 text-center">
+        <p class="text-muted small mb-0">
+            Nenhum log ainda — peça pra alguém rodar um "Buscar" em Meu Pluggy pra gerar.
+        </p>
+    </div>
+}
+else
+{
+    <div class="row g-3">
+        <div class="col-lg-3">
+            <div class="card card-admin p-3">
+                <h2 class="fs-6 fw-semibold mb-3"><i class="bi bi-people me-1"></i> Usuários</h2>
+                <div class="list-group list-group-flush">
+                    @foreach (var usuario in Usuarios)
+                    {
+                        var ativo = usuario.IdUser == IdSelecionado;
+                        <a href="/Admin/Pluggy?u=@usuario.IdUser"
+                           class="list-group-item list-group-item-action bg-transparent border-secondary border-opacity-25 @(ativo ? "text-white fw-semibold" : "text-muted")">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span>@usuario.Nome</span>
+                                @if (ativo)
+                                {
+                                    <i class="bi bi-caret-right-fill text-info"></i>
+                                }
+                            </div>
+                            <div class="small text-muted">
+                                @Fuso.Curto(usuario.ModificadoEm) · @Tamanho((int)usuario.Bytes)
+                            </div>
+                        </a>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-9">
+            <div class="card card-admin p-3">
+                <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+                    <h2 class="fs-6 fw-semibold mb-0">
+                        <i class="bi bi-bank me-1"></i>
+                        Última busca de @(Usuarios.First(x => x.IdUser == IdSelecionado).Nome)
+                        <span class="badge text-bg-secondary ms-1">@Eventos.Count eventos</span>
+                    </h2>
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="btn-group btn-group-sm" role="group">
+                            <input type="radio" class="btn-check" name="filtroTipo" id="tipoTodos" value="" checked>
+                            <label class="btn btn-outline-light" for="tipoTodos">Todos</label>
+
+                            <input type="radio" class="btn-check" name="filtroTipo" id="tipoBruto" value="BRUTO">
+                            <label class="btn btn-outline-warning" for="tipoBruto">BRUTO</label>
+
+                            <input type="radio" class="btn-check" name="filtroTipo" id="tipoSalvo" value="SALVO">
+                            <label class="btn btn-outline-success" for="tipoSalvo">SALVO</label>
+                        </div>
+                        <a class="btn btn-sm btn-outline-info" href="/Admin/Pluggy?handler=Baixar&u=@IdSelecionado">
+                            <i class="bi bi-download me-1"></i> Baixar tudo
+                        </a>
+                    </div>
+                </div>
+
+                @if (Eventos.Count == 0)
+                {
+                    <p class="text-muted small mb-0">Arquivo vazio ou sendo escrito neste momento.</p>
+                }
+
+                <div class="d-grid gap-2" id="listaEventos">
+                    @foreach (var evento in Eventos)
+                    {
+                        <details class="evento border border-secondary border-opacity-25 rounded"
+                                 data-tipo="@evento.Tipo" data-indice="@evento.Indice">
+                            <summary class="px-3 py-2 d-flex align-items-center gap-2 flex-wrap" style="cursor: pointer;">
+                                <span class="badge @ClasseDoTipo(evento.Tipo)">@evento.Tipo</span>
+                                <span class="fw-semibold">@evento.Operacao</span>
+                                <code class="text-info small">@evento.Chave</code>
+                                <span class="ms-auto small text-muted">
+                                    @Fuso.ParaLocal(evento.Momento).ToString("HH:mm:ss") · @Tamanho(evento.Bytes)
+                                </span>
+                            </summary>
+                            <div class="px-3 pb-3">
+                                @if (evento.Nota is { Length: > 0 })
+                                {
+                                    <p class="small text-muted border-start border-secondary ps-2 mb-2">@evento.Nota</p>
+                                }
+                                <div class="d-flex justify-content-end mb-1">
+                                    <button class="btn btn-sm btn-outline-light btn-copiar" type="button">
+                                        <i class="bi bi-clipboard me-1"></i> Copiar JSON
+                                    </button>
+                                </div>
+                                <pre class="log-viewer mb-0 conteudo">Abrindo…</pre>
+                            </div>
+                        </details>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@section Scripts {
+    <script>
+        (function () {
+            var idUser = @(IdSelecionado ?? 0);
+
+            // O JSON só é buscado quando o bloco abre — o arquivo inteiro passa
+            // de 1 MB e mandar tudo de uma vez era o que deixava a tela um
+            // paredão de texto.
+            //
+            // Ligado direto em cada <details>, NÃO por delegação: o evento
+            // "toggle" não borbulha, então um $('#pai').on('toggle', 'details',
+            // ...) nunca dispara e o bloco fica preso em "Abrindo…" pra sempre.
+            $('#listaEventos details.evento').on('toggle', function () {
+                var $bloco = $(this);
+                if (!this.open || $bloco.data('carregado')) return;
+
+                $bloco.data('carregado', true);
+                var $saida = $bloco.find('.conteudo');
+
+                $.ajax({
+                    url: '/Admin/Pluggy?handler=Evento&u=' + idUser + '&i=' + $bloco.data('indice'),
+                    dataType: 'text',
+                    timeout: 20000
+                })
+                    .done(function (txt) {
+                        try {
+                            $saida.text(JSON.stringify(JSON.parse(txt), null, 2));
+                        } catch (e) {
+                            $saida.text(txt);
+                        }
+                    })
+                    .fail(function (xhr, tipo) {
+                        $bloco.data('carregado', false);
+                        $saida.text('Erro ao carregar este evento (' + (tipo === 'timeout' ? 'tempo esgotado' : 'HTTP ' + xhr.status) + ').');
+                    });
+            });
+
+            $('#listaEventos').on('click', '.btn-copiar', function () {
+                var botao = this;
+                var txt = $(this).closest('details').find('.conteudo').text();
+                navigator.clipboard.writeText(txt).then(function () {
+                    var antes = botao.innerHTML;
+                    botao.innerHTML = '<i class="bi bi-check2 me-1"></i> Copiado';
+                    setTimeout(function () { botao.innerHTML = antes; }, 1500);
+                });
+            });
+
+            $('input[name="filtroTipo"]').on('change', function () {
+                var tipo = $(this).val();
+                $('#listaEventos details.evento').each(function () {
+                    $(this).toggle(!tipo || $(this).data('tipo') === tipo);
+                });
+            });
+        })();
+    </script>
+}

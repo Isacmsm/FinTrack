@@ -1,0 +1,35 @@
+@page
+@using FinTrack.Data
+@using Microsoft.AspNetCore.DataProtection
+@using Microsoft.AspNetCore.Http
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@inject IDataProtectionProvider Protecao
+@functions {
+
+    /// <summary>
+    /// Segundo passo do login de operador — mesma ideia do
+    /// /ControleAcesso/Entrar: chega sem cookie de sessão, ganha uma sessão
+    /// nova, e só então grava a identidade. Ver Data/TicketLogin.cs.
+    ///
+    /// Grava só as chaves de operador: a mesma sessão do navegador pode estar
+    /// logada como usuário do app ao mesmo tempo, e as duas convivem.
+    /// </summary>
+    public async Task<IActionResult> OnGetAsync(string? t)
+    {
+        var ticket = TicketLogin.Ler(Protecao, TicketLogin.PropositoOperador, t);
+        if (ticket is null) return RedirectToPage("/AdminAcesso/Login");
+
+        var operador = await Db.Operadores.FirstOrDefaultAsync(o => o.Id == ticket.Id);
+        if (operador is null) return RedirectToPage("/AdminAcesso/Login");
+
+        // Devolve a sessão do app que existia antes da troca: entrar no painel
+        // não derruba quem já estava logado no FinTrack neste navegador.
+        TicketLogin.RestaurarSessao(HttpContext, ticket.Preservada);
+
+        HttpContext.Session.SetInt32("IdOperador", operador.Id);
+        HttpContext.Session.SetString("NomeOperador", operador.Nome);
+
+        return RedirectToPage("/Admin/Index");
+    }
+}

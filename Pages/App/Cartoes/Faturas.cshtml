@@ -29,9 +29,15 @@
             .Where(t => t.IdUser == idUser && t.ContaTipo == "CREDIT")
             .ToListAsync();
 
+        // Pagamentos como eventos soltos: qual fatura cada um quita é decidido
+        // no cálculo, pelas datas — ver Data/FaturaCalculadora.cs.
+        var pagamentos = await Db.PluggyFaturaPagamentos
+            .Where(p => p.IdUser == idUser)
+            .ToListAsync();
+
         // Cálculo compartilhado com a página Cartões — as duas têm que
         // mostrar exatamente os mesmos números.
-        Faturas = FaturaCalculadora.Calcular(faturasPluggy, transacoesCartao, DateTime.Today);
+        Faturas = FaturaCalculadora.Calcular(faturasPluggy, transacoesCartao, pagamentos, DateTime.Today);
     }
 }
 @{
@@ -43,7 +49,10 @@
 <p class="text-secondary mt-1">Valores vindos direto da Pluggy — os mesmos do Meu Pluggy</p>
 
 <div class="alert alert-secondary py-2 px-3 small mt-3 mb-0">
-    <strong>Sem confirmação de pagamento</strong> não quer dizer que a fatura está em aberto de verdade — a Pluggy nem sempre devolve o histórico de pagamento pra esse conector. Confira no Meu Pluggy/app do banco antes de tratar como pendência real.
+    Cada fatura é um ciclo de fechamento do cartão. O pagamento entra na fatura fechada mais recente que ainda
+    tinha saldo — o que sobra vira adiantamento do ciclo seguinte, e o banco já desconta isso do valor da
+    próxima fatura. Faturas marcadas como <strong>prevista</strong> ainda não foram fechadas pelo banco:
+    o valor é a soma do que já foi lançado nelas.
 </div>
 
 <div class="d-grid gap-3 mt-3">
@@ -51,52 +60,74 @@
     {
         var (textoStatus, classeStatus) = fatura.StatusPagamento is { Length: > 0 } s ? FaturaCalculadora.BadgeStatusPagamento(s) : ("", "");
 
-        <details class="card shadow-sm" open="@(fatura.Sintetizada ? "open" : null)">
+        <details class="card shadow-sm" open="@(fatura.Estado == EstadoFatura.Aberta ? "open" : null)">
             <summary class="card-header bg-white d-flex align-items-center justify-content-between flex-wrap gap-2" style="cursor: pointer;">
                 <span class="d-flex align-items-center gap-2 flex-wrap">
                     <span class="fw-semibold">@fatura.ContaNome</span>
                     <span class="text-secondary">·</span>
-                    @if (fatura.Sintetizada)
+                    <span>Vencimento @fatura.DataVencimento.ToString("dd/MM/yyyy")</span>
+
+                    @switch (fatura.Estado)
                     {
-                        <span>Ciclo atual (ainda não fechou)</span>
-                        <span class="badge text-bg-primary">Em aberto</span>
-                        <span class="badge text-bg-light border text-secondary">estimado por data</span>
-                        @if (fatura.ValorAntecipado > 0)
-                        {
-                            <span class="badge text-bg-success">@fatura.ValorAntecipado.ToString("C", culturaBr) já adiantado</span>
-                        }
+                        case EstadoFatura.Aberta:
+                            <span class="badge text-bg-primary">Em aberto</span>
+                            <span class="text-secondary small">fecha @fatura.DataFechamento.ToString("dd/MM")</span>
+                            break;
+
+                        case EstadoFatura.Futura:
+                            <span class="badge text-bg-light border text-secondary">Futura</span>
+                            break;
+
+                        default:
+                            <span class="badge text-bg-light border">Fechada</span>
+                            <span class="badge @classeStatus">@textoStatus</span>
+                            @if (fatura.EmAtraso)
+                            {
+                                <span class="badge text-bg-danger">Vencida</span>
+                            }
+                            @if (fatura.ValorMinimo is decimal minimo && minimo > 0)
+                            {
+                                <span class="text-secondary small">(mínimo @minimo.ToString("C", culturaBr))</span>
+                            }
+                            break;
                     }
-                    else
+
+                    @if (!fatura.TemFaturaOficial)
                     {
-                        <span>Vencimento @fatura.DataVencimento!.Value.ToString("dd/MM/yyyy")</span>
-                        @if (fatura.ValorMinimo is decimal minimo)
-                        {
-                            <span class="text-secondary small">(mínimo @minimo.ToString("C", culturaBr))</span>
-                        }
-                        <span class="badge text-bg-light border">Fechada</span>
-                        <span class="badge @classeStatus">@textoStatus</span>
-                        @if (fatura.PagamentoVistoNoExtrato)
-                        {
-                            <span class="text-secondary small">(visto no extrato do cartão)</span>
-                        }
+                        <span class="badge text-bg-light border text-secondary">prevista</span>
                     }
                 </span>
                 <span class="fw-bold text-danger">@fatura.ValorTotal.ToString("C", culturaBr)</span>
             </summary>
-            @if (fatura.Sintetizada && fatura.ValorAntecipado > 0)
+
+            @if (fatura.ValorAntecipado > 0 || fatura.ValorPago > 0)
             {
                 <div class="px-3 py-2 small border-bottom bg-light-subtle">
-                    <span class="text-secondary">Compras: @fatura.ValorTotal.ToString("C", culturaBr)</span>
-                    <span class="text-success ms-2">− Já adiantado: @fatura.ValorAntecipado.ToString("C", culturaBr)</span>
-                    <span class="fw-semibold ms-2">= Saldo restante: @fatura.SaldoRestante.ToString("C", culturaBr)</span>
+                    <span class="text-secondary">Compras: @fatura.ValorCompras.ToString("C", culturaBr)</span>
+                    @if (fatura.ValorAntecipado > 0)
+                    {
+                        <span class="text-success ms-2">− Adiantado no ciclo: @fatura.ValorAntecipado.ToString("C", culturaBr)</span>
+                    }
+                    <span class="fw-semibold ms-2">= Fatura: @fatura.ValorTotal.ToString("C", culturaBr)</span>
+                    @if (fatura.ValorPago > 0)
+                    {
+                        <span class="text-success ms-2">− Pago: @fatura.ValorPago.ToString("C", culturaBr)</span>
+                        <span class="fw-semibold ms-2">= Falta: @fatura.SaldoRestante.ToString("C", culturaBr)</span>
+                    }
                 </div>
                 <table class="table table-sm align-middle mb-0 border-bottom">
                     <tbody>
-                        @foreach (var pagamento in fatura.PagamentosAntecipados)
+                        @* O rótulo vem de qual lista o pagamento veio, não de comparar
+                           valores: adiantamento e pagamento podem coincidir em data e
+                           valor, e aí um Contains marcaria os dois iguais. *@
+                        @foreach (var (pagamento, adiantado) in
+                            fatura.Adiantamentos.Select(p => (p, true))
+                                .Concat(fatura.Pagamentos.Select(p => (p, false)))
+                                .OrderBy(x => x.Item1.Data))
                         {
                             <tr>
                                 <td class="text-secondary" style="width: 110px;">@pagamento.Data.ToString("dd/MM/yyyy")</td>
-                                <td>Pagamento adiantado</td>
+                                <td>@(adiantado ? "Pagamento adiantado (antes do fechamento)" : "Pagamento da fatura")</td>
                                 <td class="text-end text-success fw-semibold" style="width: 140px;">+ @pagamento.Valor.ToString("C", culturaBr)</td>
                             </tr>
                         }
@@ -141,9 +172,14 @@
                     @if (fatura.DivergeDoTotal)
                     {
                         <p class="text-secondary small px-3 py-2 mb-0 border-top">
-                            Transações importadas somam @fatura.SomaTransacoesImportadas.ToString("C", culturaBr),
-                            diferente do total da fatura (@fatura.ValorTotal.ToString("C", culturaBr)) —
-                            pode faltar alguma compra fora da janela de importação, ou a fatura inclui encargos que não aparecem como transação separada.
+                            As compras importadas somam @fatura.ValorCompras.ToString("C", culturaBr)
+                            @if (fatura.ValorAntecipado > 0)
+                            {
+                                <text>(− @fatura.ValorAntecipado.ToString("C", culturaBr) adiantados)</text>
+                            }
+                            , diferente do total oficial da fatura (@fatura.ValorTotal.ToString("C", culturaBr)) —
+                            pode faltar alguma compra fora da janela de importação de 90 dias, ou a fatura inclui
+                            encargos (multa, juros, IOF) que não vêm como transação separada.
                         </p>
                     }
                 }

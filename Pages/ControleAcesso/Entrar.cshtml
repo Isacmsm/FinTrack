@@ -1,0 +1,52 @@
+@page
+@using FinTrack.Data
+@using FinTrack.Models
+@using Microsoft.AspNetCore.DataProtection
+@using Microsoft.AspNetCore.Http
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
+@inject IDataProtectionProvider Protecao
+@functions {
+
+    /// <summary>
+    /// Segundo passo do login. Chega aqui sem cookie de sessão (o handler de
+    /// login apagou), então o middleware cria uma sessão nova e é nela que a
+    /// identidade é gravada — id de sessão diferente do que existia antes de
+    /// digitar a senha. Ver Data/TicketLogin.cs.
+    ///
+    /// Também é aqui que nasce a linha em SessaoUsuario, com o token de
+    /// presença: só faz sentido registrar "sessão começou" quando ela existe
+    /// de verdade. Quem fecha: Sair.cshtml no logout, ou Pages/Admin/Index.cshtml
+    /// quando o heartbeat some — ver Models/SessaoUsuario.cs.
+    /// </summary>
+    public async Task<IActionResult> OnGetAsync(string? t)
+    {
+        var ticket = TicketLogin.Ler(Protecao, TicketLogin.PropositoUsuario, t);
+        if (ticket is null) return RedirectToPage("/ControleAcesso/Index");
+
+        var usuario = await Db.Usuarios.FirstOrDefaultAsync(u => u.Id == ticket.Id);
+        if (usuario is null) return RedirectToPage("/ControleAcesso/Index");
+
+        // Primeiro o que veio de antes (uma sessão de operador aberta no mesmo
+        // navegador, por exemplo), depois a identidade nova por cima — quem
+        // acabou de entrar tem que vencer.
+        TicketLogin.RestaurarSessao(HttpContext, ticket.Preservada);
+
+        var token = Guid.NewGuid().ToString();
+
+        HttpContext.Session.SetInt32("IdUser", usuario.Id);
+        HttpContext.Session.SetString("NomeUser", usuario.Nome);
+        HttpContext.Session.SetString("EmailUser", usuario.Email);
+        HttpContext.Session.SetString("TokenSessao", token);
+
+        Db.SessoesUsuario.Add(new SessaoUsuario
+        {
+            IdUser = usuario.Id,
+            Token = token,
+            InicioEm = DateTime.UtcNow
+        });
+        await Db.SaveChangesAsync();
+
+        return RedirectToPage("/App/Index");
+    }
+}

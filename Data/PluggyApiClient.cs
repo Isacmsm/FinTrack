@@ -123,7 +123,7 @@ public class PluggyBillPaymentDto
 /// clientId/clientSecret (ou apiKey) do usuário como parâmetro, já que são
 /// por usuário, não por app.
 /// </summary>
-public class PluggyApiClient(IHttpClientFactory httpClientFactory)
+public class PluggyApiClient(IHttpClientFactory httpClientFactory, PluggyLogSessao logPluggy)
 {
     private static readonly JsonSerializerOptions OpcoesJson = new()
     {
@@ -132,6 +132,24 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
     };
 
     private HttpClient Cliente => httpClientFactory.CreateClient("Pluggy");
+
+    /// <summary>
+    /// Grava o JSON exatamente como a Pluggy devolveu, ANTES de passar pelos
+    /// DTOs — os DTOs já descartam qualquer campo que o app não declarou
+    /// (ex.: número da conta, dados bancários, campos novos que a Pluggy
+    /// adicionar). Isto é o que "toda info que a Pluggy traz" significa; o
+    /// que de fato vira registro no banco é gravado à parte, em
+    /// Pages/App/Configuracoes/Pluggy.cshtml, no mesmo arquivo e com a mesma
+    /// chave (itemId/accountId/id do registro) pra dar pra comparar.
+    ///
+    /// Vai direto pro arquivo do usuário (Data/PluggyLogSessao.cs), fora do
+    /// pipeline do Serilog — se nenhuma sincronização estiver em curso, não
+    /// escreve nada.
+    /// </summary>
+    private void LogBruto(string operacao, string chave, string jsonBruto) =>
+        logPluggy.Registrar("BRUTO", operacao, chave, jsonBruto,
+            "Resposta crua da Pluggy, antes de passar pelos DTOs do FinTrack. Todo campo que aparece " +
+            "aqui e não aparece no SALVO correspondente foi lido e descartado.");
 
     public async Task<string> ObterApiKeyAsync(string clientId, string clientSecret)
     {
@@ -209,7 +227,9 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
         var resposta = await Cliente.SendAsync(NovaRequisicao(HttpMethod.Get, $"/items/{itemId}", apiKey));
         if (!resposta.IsSuccessStatusCode) return null;
 
-        return await resposta.Content.ReadFromJsonAsync<PluggyItemDto>(OpcoesJson);
+        var corpo = await resposta.Content.ReadFromJsonAsync<JsonElement>(OpcoesJson);
+        LogBruto("GET /items", itemId, corpo.GetRawText());
+        return JsonSerializer.Deserialize<PluggyItemDto>(corpo.GetRawText(), OpcoesJson);
     }
 
     /// <summary>
@@ -284,7 +304,9 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
             }
 
             var corpo = await resposta.Content.ReadFromJsonAsync<JsonElement>(OpcoesJson);
-            investimentos.AddRange(JsonSerializer.Deserialize<List<PluggyInvestmentDto>>(corpo.GetProperty("results").GetRawText(), OpcoesJson) ?? []);
+            var bruto = corpo.GetProperty("results").GetRawText();
+            LogBruto($"GET /investments (página {pagina})", itemId, bruto);
+            investimentos.AddRange(JsonSerializer.Deserialize<List<PluggyInvestmentDto>>(bruto, OpcoesJson) ?? []);
 
             totalPaginas = corpo.TryGetProperty("totalPages", out var tp) ? tp.GetInt32() : 1;
             pagina++;
@@ -304,7 +326,9 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
         }
 
         var corpo = await resposta.Content.ReadFromJsonAsync<JsonElement>(OpcoesJson);
-        return JsonSerializer.Deserialize<List<PluggyAccountDto>>(corpo.GetProperty("results").GetRawText(), OpcoesJson) ?? [];
+        var bruto = corpo.GetProperty("results").GetRawText();
+        LogBruto("GET /accounts", itemId, bruto);
+        return JsonSerializer.Deserialize<List<PluggyAccountDto>>(bruto, OpcoesJson) ?? [];
     }
 
     /// <summary>
@@ -322,7 +346,9 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
         if (!resposta.IsSuccessStatusCode) return [];
 
         var corpo = await resposta.Content.ReadFromJsonAsync<JsonElement>(OpcoesJson);
-        return JsonSerializer.Deserialize<List<PluggyBillDto>>(corpo.GetProperty("results").GetRawText(), OpcoesJson) ?? [];
+        var bruto = corpo.GetProperty("results").GetRawText();
+        LogBruto("GET /bills", accountId, bruto);
+        return JsonSerializer.Deserialize<List<PluggyBillDto>>(bruto, OpcoesJson) ?? [];
     }
 
     /// <summary>
@@ -349,7 +375,9 @@ public class PluggyApiClient(IHttpClientFactory httpClientFactory)
             }
 
             var corpo = await resposta.Content.ReadFromJsonAsync<JsonElement>(OpcoesJson);
-            var pagina = JsonSerializer.Deserialize<List<PluggyTransactionDto>>(corpo.GetProperty("results").GetRawText(), OpcoesJson) ?? [];
+            var bruto = corpo.GetProperty("results").GetRawText();
+            LogBruto("GET /v2/transactions", accountId, bruto);
+            var pagina = JsonSerializer.Deserialize<List<PluggyTransactionDto>>(bruto, OpcoesJson) ?? [];
             transacoes.AddRange(pagina);
 
             cursor = corpo.TryGetProperty("next", out var next) && next.ValueKind == JsonValueKind.String

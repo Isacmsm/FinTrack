@@ -1,9 +1,36 @@
 @page
+@using FinTrack.Data
+@using Microsoft.EntityFrameworkCore
+@inject FinTrackDbContext Db
 @functions {
 
-    public IActionResult OnGet()
+    public async Task<IActionResult> OnGetAsync()
     {
-        HttpContext.Session.Clear();
+        // Tem que ler o token ANTES de limpar a sessão — depois disso ele já
+        // era, e a linha em SessaoUsuario fica aberta pro fechamento por
+        // heartbeat (menos preciso) resolver mais tarde.
+        var token = HttpContext.Session.GetString("TokenSessao");
+
+        // Só as chaves do usuário — Session.Clear() derrubaria também uma
+        // sessão de operador ativa no mesmo navegador (ver
+        // Pages/AdminAcesso/Sair.cshtml, que já fazia a parte simétrica
+        // disto: sair do /admin nunca derruba a sessão do app).
+        HttpContext.Session.Remove("IdUser");
+        HttpContext.Session.Remove("NomeUser");
+        HttpContext.Session.Remove("EmailUser");
+        HttpContext.Session.Remove("TokenSessao");
+
+        if (token is not null)
+        {
+            var sessao = await Db.SessoesUsuario.FirstOrDefaultAsync(s => s.Token == token && s.FimEm == null);
+            if (sessao is not null)
+            {
+                sessao.FimEm = DateTime.UtcNow;
+                sessao.Motivo = "logout";
+                await Db.SaveChangesAsync();
+            }
+        }
+
         return RedirectToPage("/ControleAcesso/Index");
     }
 }

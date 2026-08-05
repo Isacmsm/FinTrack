@@ -7,7 +7,9 @@
 // erro, o JS parava de achar os campos.
 
 function mostrarErros(xhr) {
-    if (xhr.status === 400 && xhr.responseJSON) {
+    // 400 é o status dos três destinos do Util.TratarErro. 429 vem do rate
+    // limiter do login (Program.cs), que também responde com {mensagem}.
+    if ((xhr.status === 400 || xhr.status === 429) && xhr.responseJSON) {
         const erros = xhr.responseJSON;
 
         if (erros.errosInput) {

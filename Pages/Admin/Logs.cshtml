@@ -1,0 +1,129 @@
+@page
+@using FinTrack.Data
+@inject LogFileStore Arquivos
+@functions {
+
+    public List<string> Datas = [];
+
+    public void OnGet()
+    {
+        Datas = Arquivos.DatasDisponiveis().ToList();
+    }
+
+    /// <summary>
+    /// A data é validada dentro do LogFileStore (8 dígitos) antes de virar
+    /// nome de arquivo — nada vindo do cliente entra num caminho direto.
+    /// </summary>
+    public IActionResult OnGetArquivo(string data)
+    {
+        var linhas = Arquivos.UltimasLinhas(data ?? "");
+        return new JsonResult(new { linhas });
+    }
+}
+@{
+    ViewData["Title"] = "Log da aplicação";
+    ViewData["Aba"] = "logs";
+}
+
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div>
+        <h1 class="fs-4 fw-bold text-white mb-0">Log da aplicação</h1>
+        <p class="text-muted small mb-0">
+            Um arquivo por dia, apagado depois de 15 dias. Erros inesperados dos handlers caem aqui com o
+            stack trace inteiro. O que a Pluggy devolve <strong>não</strong> passa por aqui — fica em
+            <a href="/Admin/Pluggy" class="text-info">Pluggy</a>.
+        </p>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+        <select id="seletorData" class="form-select form-select-sm bg-dark text-light border-secondary" style="width: auto;">
+            @foreach (var d in Datas)
+            {
+                <option value="@d">@d[6..8]/@d[4..6]/@d[..4]</option>
+            }
+        </select>
+        <button class="btn btn-sm btn-outline-light" id="btnVer"><i class="bi bi-arrow-clockwise"></i></button>
+        <button class="btn btn-sm btn-outline-info" id="btnCopiar"><i class="bi bi-clipboard me-1"></i> Copiar</button>
+    </div>
+</div>
+
+@if (Datas.Count == 0)
+{
+    <div class="card card-admin p-4 text-center">
+        <p class="text-muted small mb-0">Nenhum arquivo de log em disco ainda.</p>
+    </div>
+}
+else
+{
+    <div class="card card-admin p-3">
+        <div class="d-flex align-items-center gap-2 mb-3">
+            <div class="input-group input-group-sm" style="max-width: 22rem;">
+                <span class="input-group-text bg-dark text-muted border-secondary"><i class="bi bi-funnel"></i></span>
+                <input type="text" id="filtro" class="form-control bg-dark text-light border-secondary"
+                       placeholder="filtrar linhas (ex.: ERR, Pluggy, /App/)">
+            </div>
+            <span class="small text-muted" id="contadorLinhas"></span>
+        </div>
+
+        <pre class="log-viewer texto-corrido mb-0" id="conteudo">Carregando…</pre>
+    </div>
+}
+
+@section Scripts {
+    <script>
+        (function () {
+            var todas = [];
+
+            function pintar() {
+                var termo = $('#filtro').val().toLowerCase();
+                var visiveis = termo
+                    ? todas.filter(function (l) { return l.toLowerCase().indexOf(termo) >= 0; })
+                    : todas;
+
+                $('#conteudo').text(visiveis.length ? visiveis.join('\n') : '(nada bate com o filtro)');
+                $('#contadorLinhas').text(visiveis.length + ' de ' + todas.length + ' linhas');
+            }
+
+            function carregar() {
+                var data = $('#seletorData').val();
+                if (!data) {
+                    $('#conteudo').text('Nenhuma data selecionada.');
+                    return;
+                }
+
+                $('#conteudo').text('Carregando…');
+
+                $.ajax({
+                    url: '/Admin/Logs?handler=Arquivo&data=' + encodeURIComponent(data),
+                    dataType: 'json',
+                    timeout: 20000
+                })
+                    .done(function (r) { todas = r.linhas || []; pintar(); })
+                    .fail(function (xhr, tipo) {
+                        // Nunca deixa a tela parada em "Carregando…" sem
+                        // explicação: sessão de operador expirada devolve o HTML
+                        // do login (e quebra o parse do JSON), e sem timeout uma
+                        // requisição pendurada ficaria assim pra sempre.
+                        var motivo = tipo === 'timeout' ? 'tempo esgotado'
+                            : tipo === 'parsererror' ? 'resposta inesperada — talvez a sessão do painel tenha expirado, recarregue a página'
+                            : 'HTTP ' + xhr.status;
+                        $('#conteudo').text('Erro ao carregar o arquivo (' + motivo + ').');
+                    });
+            }
+
+            $('#btnVer').on('click', carregar);
+            $('#seletorData').on('change', carregar);
+            $('#filtro').on('input', pintar);
+
+            $('#btnCopiar').on('click', function () {
+                var botao = this;
+                navigator.clipboard.writeText($('#conteudo').text()).then(function () {
+                    var antes = botao.innerHTML;
+                    botao.innerHTML = '<i class="bi bi-check2 me-1"></i> Copiado';
+                    setTimeout(function () { botao.innerHTML = antes; }, 1500);
+                });
+            });
+
+            if ($('#seletorData').length) carregar();
+        })();
+    </script>
+}

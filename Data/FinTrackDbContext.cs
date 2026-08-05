@@ -30,11 +30,17 @@ public partial class FinTrackDbContext : DbContext
 
     public virtual DbSet<PluggyFatura> PluggyFaturas { get; set; }
 
+    public virtual DbSet<PluggyFaturaPagamento> PluggyFaturaPagamentos { get; set; }
+
     public virtual DbSet<PluggyInvestimento> PluggyInvestimentos { get; set; }
 
     public virtual DbSet<Orcamento> Orcamentos { get; set; }
 
     public virtual DbSet<MetaInvestimento> Metas { get; set; }
+
+    public virtual DbSet<Operador> Operadores { get; set; }
+
+    public virtual DbSet<SessaoUsuario> SessoesUsuario { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -229,7 +235,6 @@ public partial class FinTrackDbContext : DbContext
             entity.Property(e => e.ValorTotal).HasColumnType("money");
             entity.Property(e => e.ValorMinimo).HasColumnType("money");
             entity.Property(e => e.ValorPago).HasColumnType("money");
-            entity.Ignore(e => e.StatusPagamento);
 
             entity.HasIndex(e => e.BillId).IsUnique();
 
@@ -237,6 +242,31 @@ public partial class FinTrackDbContext : DbContext
                 .HasForeignKey(d => d.IdUser)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("FK_PluggyFatura_Usuario");
+        });
+
+        modelBuilder.Entity<PluggyFaturaPagamento>(entity =>
+        {
+            entity.ToTable("PluggyFaturaPagamento");
+
+            entity.Property(e => e.ContaPluggyId)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.Origem)
+                .HasMaxLength(20)
+                .IsUnicode(false);
+            entity.Property(e => e.Data).HasColumnType("date");
+            entity.Property(e => e.Valor).HasColumnType("money");
+
+            // Chave natural, não um id da Pluggy: ela não dá id estável pra
+            // pagamento (o mesmo pagamento aparece com ids diferentes em
+            // faturas diferentes, e de novo como transação no extrato). Ver
+            // Models/PluggyFaturaPagamento.cs.
+            entity.HasIndex(e => new { e.IdUser, e.ContaPluggyId, e.Data, e.Valor }).IsUnique();
+
+            entity.HasOne(d => d.IdUserNavigation).WithMany(p => p.PluggyFaturaPagamentos)
+                .HasForeignKey(d => d.IdUser)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_PluggyFaturaPagamento_Usuario");
         });
 
         modelBuilder.Entity<PluggyInvestimento>(entity =>
@@ -346,6 +376,43 @@ public partial class FinTrackDbContext : DbContext
             entity.Property(e => e.Senha)
                 .HasMaxLength(255)
                 .IsUnicode(false);
+        });
+
+        modelBuilder.Entity<Operador>(entity =>
+        {
+            entity.ToTable("Operador");
+
+            entity.Property(e => e.Email)
+                .HasMaxLength(150)
+                .IsUnicode(false);
+            entity.Property(e => e.Nome)
+                .HasMaxLength(100)
+                .IsUnicode(false);
+            entity.Property(e => e.Senha)
+                .HasMaxLength(255)
+                .IsUnicode(false);
+            entity.Property(e => e.CriadoEm).HasDefaultValueSql("(sysutcdatetime())");
+
+            entity.HasIndex(e => e.Email).IsUnique();
+        });
+
+        modelBuilder.Entity<SessaoUsuario>(entity =>
+        {
+            entity.ToTable("SessaoUsuario");
+
+            entity.Property(e => e.Token)
+                .HasMaxLength(36)
+                .IsUnicode(false);
+            entity.Property(e => e.Motivo)
+                .HasMaxLength(20)
+                .IsUnicode(false);
+
+            entity.HasIndex(e => e.Token).IsUnique();
+
+            entity.HasOne(d => d.IdUserNavigation).WithMany(p => p.Sessoes)
+                .HasForeignKey(d => d.IdUser)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_SessaoUsuario_Usuario");
         });
 
         OnModelCreatingPartial(modelBuilder);
