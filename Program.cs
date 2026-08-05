@@ -2,6 +2,7 @@ using FinTrack.Data;
 using FinTrack.Filters;
 using FinTrack.Models;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -49,6 +50,19 @@ if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error");
     // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
     app.UseHsts();
+
+    // Atrás do Caddy: o proxy termina o HTTPS e repassa HTTP puro pro
+    // container, então sem isso UseHttpsRedirection() entraria em loop (o
+    // app nunca veria a requisição como https). KnownNetworks/KnownProxies
+    // vazios porque o Caddy chega pela rede interna do compose, não do
+    // loopback que o middleware confia por padrão — seguro aqui porque a
+    // porta do app não é exposta fora da rede do Docker.
+    app.UseForwardedHeaders(new ForwardedHeadersOptions
+    {
+        ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+        KnownIPNetworks = { },
+        KnownProxies = { }
+    });
 }
 
 app.UseHttpsRedirection();
