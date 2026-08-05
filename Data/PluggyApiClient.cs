@@ -37,6 +37,14 @@ public class PluggyTransactionDto
     public string Id { get; set; } = "";
     public string? Description { get; set; }
     public decimal Amount { get; set; }
+
+    /// <summary>
+    /// Só vem preenchido quando a transação foi feita em moeda diferente da
+    /// conta (compra internacional) — Amount ali é o valor na moeda
+    /// original (ex.: USD), não o que realmente saiu da conta em BRL.
+    /// </summary>
+    public decimal? AmountInAccountCurrency { get; set; }
+
     public DateTime Date { get; set; }
     public string Type { get; set; } = ""; // DEBIT ou CREDIT
     public string? Category { get; set; }

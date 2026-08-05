@@ -448,7 +448,10 @@
                 {
                     IdUser = idUser,
                     Desc = string.IsNullOrWhiteSpace(t.Description) ? conta.Name : t.Description,
-                    Valor = Math.Abs(t.Amount),
+                    // Compra internacional: Amount vem na moeda original (ex.:
+                    // USD), AmountInAccountCurrency é o que realmente saiu da
+                    // conta em BRL.
+                    Valor = Math.Abs(t.AmountInAccountCurrency ?? t.Amount),
                     Data = t.Date,
                     IdCategoria = idCategoria,
                     PluggyTransactionId = t.Id,
