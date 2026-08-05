@@ -88,18 +88,48 @@ public static class FaturaCalculadora
                     .OrderByDescending(t => t.Data)
                     .ToList();
 
-                // bills.payments pode vir vazio pra essa fatura ainda. Fallback:
-                // procura no próprio extrato um "Recebimento de Fatura" com
-                // valor batendo (tolerância de juro/arredondamento) depois do
-                // fechamento.
-                var pagamentoVisto = fatura.StatusPagamento != "Paga" && fatura.DataFechamento is not null
-                    ? pagamentosRecebidos
+                // Independente da fatura já vir "Paga" pela Pluggy (via
+                // ValorPago) ou não: sempre procura no próprio extrato qual
+                // "Recebimento de Fatura" é esse pagamento, senão ele nunca é
+                // marcado como usado e acaba vazando pro ciclo em aberto como
+                // se fosse adiantamento daquele. "Já confirmado" e "achei a
+                // transação correspondente" são perguntas diferentes — a
+                // Pluggy marca esse recebimento com o BillId do ciclo que
+                // estava aberto no momento do pagamento, não com o da fatura
+                // sendo quitada, então BillId não serve aqui, só valor. Testa
+                // um pagamento só primeiro; se ninguém bater sozinho, testa
+                // par (fatura paga em duas transações — ex.: débito
+                // automático parcial + Pix complementando).
+                List<Transacao>? pagamentosQueQuitam = null;
+                if (fatura.DataFechamento is not null)
+                {
+                    var candidatos = pagamentosRecebidos
                         .Where(p => p.ContaPluggyId == idConta && !idsPagamentosUsados.Contains(p.Id) && p.Data >= fatura.DataFechamento)
-                        .OrderBy(p => Math.Abs(p.Valor - fatura.ValorTotal))
-                        .FirstOrDefault(p => Math.Abs(p.Valor - fatura.ValorTotal) <= 2m)
-                    : null;
+                        .OrderBy(p => p.Data)
+                        .ToList();
 
-                if (pagamentoVisto is not null) idsPagamentosUsados.Add(pagamentoVisto.Id);
+                    var unico = candidatos
+                        .OrderBy(p => Math.Abs(p.Valor - fatura.ValorTotal))
+                        .FirstOrDefault(p => Math.Abs(p.Valor - fatura.ValorTotal) <= 2m);
+
+                    if (unico is not null)
+                    {
+                        pagamentosQueQuitam = [unico];
+                    }
+                    else
+                    {
+                        for (var i = 0; i < candidatos.Count && pagamentosQueQuitam is null; i++)
+                        for (var j = i + 1; j < candidatos.Count; j++)
+                        {
+                            if (Math.Abs(candidatos[i].Valor + candidatos[j].Valor - fatura.ValorTotal) > 2m) continue;
+                            pagamentosQueQuitam = [candidatos[i], candidatos[j]];
+                            break;
+                        }
+                    }
+                }
+
+                if (pagamentosQueQuitam is not null)
+                    foreach (var p in pagamentosQueQuitam) idsPagamentosUsados.Add(p.Id);
 
                 resultado.Add(new FaturaResumo
                 {
@@ -110,8 +140,8 @@ public static class FaturaCalculadora
                     ValorTotal = fatura.ValorTotal,
                     ValorMinimo = fatura.ValorMinimo,
                     Transacoes = transacoesDaFatura,
-                    StatusPagamento = pagamentoVisto is not null ? "Paga" : fatura.StatusPagamento,
-                    PagamentoVistoNoExtrato = pagamentoVisto is not null
+                    StatusPagamento = pagamentosQueQuitam is not null ? "Paga" : fatura.StatusPagamento,
+                    PagamentoVistoNoExtrato = pagamentosQueQuitam is not null
                 });
 
                 fechamentoAnterior = fatura.DataFechamento ?? fechamentoAnterior;
