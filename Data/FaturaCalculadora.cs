@@ -69,22 +69,29 @@ public static class FaturaCalculadora
 
             // Cada transação de cartão já vem da Pluggy com o BillId da fatura
             // a que pertence (CreditCardMetadata.billId) — é o dado oficial
-            // dela, não uma aproximação nossa. Só cai na janela de data quem
-            // ainda não tem BillId (o ciclo em aberto, que a Pluggy ainda não
-            // fechou como Bill). Uma janela de data por conta própria já
-            // errou compra parcelada (forecast pra fatura futura, sem BillId
-            // ainda) pra dentro da fatura fechada errada.
+            // dela, não uma aproximação nossa. Mas uma compra com forecast
+            // (parcela futura, ou qualquer compra perto do fechamento) ainda
+            // não tem BillId — só o mês de vencimento previsto
+            // (BillForecastDate, formato yyyy-MM). Confirmado com o extrato
+            // real: esse mês é o de VENCIMENTO da fatura, não "mês seguinte"
+            // à compra. Usa isso pra encaixar na fatura certa antes de cair
+            // no ciclo em aberto.
             var ordenadas = faturasPluggy.Where(f => f.ContaPluggyId == idConta)
                 .OrderBy(f => f.DataFechamento ?? f.DataVencimento)
                 .ToList();
+            var faturaPorMesVencimento = ordenadas
+                .GroupBy(f => f.DataVencimento.ToString("yyyy-MM"))
+                .ToDictionary(g => g.Key, g => g.First());
             DateTime? fechamentoAnterior = null;
             var idsPagamentosUsados = new HashSet<int>();
 
             foreach (var fatura in ordenadas)
             {
+                var mesVencimento = fatura.DataVencimento.ToString("yyyy-MM");
                 var transacoesDaFatura = transacoesCartao
                     .Where(t => t.ContaPluggyId == idConta && !t.IdCategoriaNavigation.EhMovimentacaoInterna
-                                && t.PluggyBillId == fatura.BillId)
+                                && (t.PluggyBillId == fatura.BillId
+                                    || (t.PluggyBillId == null && t.PluggyFaturaPrevista == mesVencimento)))
                     .OrderByDescending(t => t.Data)
                     .ToList();
 
@@ -156,15 +163,14 @@ public static class FaturaCalculadora
             // A Pluggy ainda não fechou uma Bill pro ciclo corrente, então
             // essas transações chegam sem BillId — calculado aqui a partir
             // delas (só compra/estorno, pagamento de fatura continua de
-            // fora), e marcado como estimativa, não dado oficial. Sem filtro
-            // de data: uma parcela com forecast pra fatura futura (ex.: "2/2"
-            // datada de quando a compra foi feita, BillId ainda null) tem
-            // Data anterior ao último fechamento — filtrar por data deixava
-            // essas invisíveis em qualquer lugar (nem na fatura fechada, nem
-            // aqui), pior que só estarem no bucket errado.
+            // fora), e marcado como estimativa, não dado oficial. Fica de
+            // fora quem já foi encaixado acima numa fatura fechada pelo mês
+            // de vencimento (BillForecastDate) — sem isso ficava duplicado
+            // ali e aqui ao mesmo tempo.
             var transacoesEmAberto = transacoesCartao
                 .Where(t => t.ContaPluggyId == idConta && !t.IdCategoriaNavigation.EhMovimentacaoInterna
-                            && t.PluggyBillId == null)
+                            && t.PluggyBillId == null
+                            && !faturaPorMesVencimento.ContainsKey(t.PluggyFaturaPrevista ?? ""))
                 .OrderByDescending(t => t.Data)
                 .ToList();
 
